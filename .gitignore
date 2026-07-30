@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+bots_data/
+platform.db
+.env
+*.log
