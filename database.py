@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS users (
     first_name      TEXT,
     status          TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | denied
     created_at      INTEGER NOT NULL,
-    approved_at     INTEGER
+    approved_at     INTEGER,
+    balance_stars   INTEGER NOT NULL DEFAULT 0  -- Telegram Stars prepaid balans (kelajakdagi pay-as-you-go hosting uchun)
 );
 
 CREATE TABLE IF NOT EXISTS pending_requests (
@@ -82,6 +83,10 @@ def init_db():
             conn.execute("ALTER TABLE bots ADD COLUMN display_name TEXT")
         except sqlite3.OperationalError:
             pass  # ustun allaqachon mavjud
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN balance_stars INTEGER NOT NULL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass  # ustun allaqachon mavjud
 
 
 # ---------- users ----------
@@ -104,6 +109,21 @@ def upsert_user(telegram_id: int, username: str, first_name: str):
 def get_user(telegram_id: int):
     with get_conn() as conn:
         return conn.execute("SELECT * FROM users WHERE telegram_id=?", (telegram_id,)).fetchone()
+
+
+def list_all_users():
+    with get_conn() as conn:
+        return conn.execute("SELECT * FROM users ORDER BY created_at DESC").fetchall()
+
+
+def add_user_balance(telegram_id: int, delta_stars: int):
+    """Balansga qo'shadi (yechish uchun manfiy son yuboring). Stars monetizatsiya
+    funksiyasi (invoice/withdraw) implementatsiya qilinganda ishlatiladi."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET balance_stars = balance_stars + ? WHERE telegram_id=?",
+            (delta_stars, telegram_id),
+        )
 
 
 def set_user_status(telegram_id: int, status: str):

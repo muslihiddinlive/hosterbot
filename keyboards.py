@@ -100,9 +100,32 @@ def bot_manage_kb(bot_row) -> InlineKeyboardMarkup:
 
 def admin_panel_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📋 Barcha botlar / foydalanuvchilar", callback_data="admin_all_bots")],
+        [InlineKeyboardButton(text="👥 Foydalanuvchilar", callback_data="admin_users")],
+        [InlineKeyboardButton(text="📋 Barcha botlar", callback_data="admin_all_bots")],
         [InlineKeyboardButton(text="➕ Bot deploy qilish (admin nomidan)", callback_data="admin_add_bot")],
     ])
+
+
+def admin_users_kb(users) -> InlineKeyboardMarkup:
+    status_icon = {"approved": "✅", "pending": "⏳", "denied": "⛔️"}
+    rows = []
+    for u in users:
+        label = f"@{u['username']}" if u["username"] else (u["first_name"] or str(u["telegram_id"]))
+        icon = status_icon.get(u["status"], "❓")
+        rows.append([InlineKeyboardButton(text=f"{icon} {label}", callback_data=f"admin_user_view:{u['telegram_id']}")])
+    rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_panel_back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_user_view_kb(telegram_id: int, bots) -> InlineKeyboardMarkup:
+    rows = []
+    for b in bots:
+        label = b["bot_username"] or b["display_name"] or f"Bot #{b['bot_id']}"
+        status_icon = "🟢" if b["status"] == "running" else ("🟡" if b["status"] == "crashed" else "🔴")
+        rows.append([InlineKeyboardButton(text=f"{status_icon} {label}", callback_data=f"admin_bot_view:{b['bot_id']}")])
+    rows.append([InlineKeyboardButton(text="✉️ Habar yozish", callback_data=f"admin_msg_user:{telegram_id}")])
+    rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_users")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def admin_all_bots_kb(bots) -> InlineKeyboardMarkup:

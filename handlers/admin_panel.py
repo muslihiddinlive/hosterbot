@@ -8,7 +8,7 @@ from aiogram.fsm.context import FSMContext
 import database as db
 from config import is_admin, STORAGE_GROUP_ID
 from states import AdminMessageUser
-from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb
+from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb
 from services.backup import backup_database
 
 router = Router()
@@ -36,6 +36,72 @@ async def cb_test_backup(message: Message, bot: Bot):
             "• <code>STORAGE_GROUP_ID</code> noto'g'ri (guruh ID minus bilan boshlanishi kerak, masalan -100...)",
             parse_mode="HTML",
         )
+
+
+@router.callback_query(F.data == "admin_panel_back")
+async def cb_admin_panel_back(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+    await callback.message.edit_text("Admin panel:", reply_markup=admin_panel_kb())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_users")
+async def cb_admin_users(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+    users = db.list_all_users()
+    if not users:
+        await callback.message.edit_text("Hozircha birorta ham foydalanuvchi yo'q.")
+        await callback.answer()
+        return
+    await callback.message.edit_text(
+        f"👥 <b>Foydalanuvchilar</b> (jami: {len(users)}):\n"
+        f"✅ tasdiqlangan · ⏳ kutilmoqda · ⛔️ rad etilgan",
+        parse_mode="HTML",
+        reply_markup=admin_users_kb(users),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_user_view:"))
+async def cb_admin_user_view(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+    telegram_id = int(callback.data.split(":")[1])
+    user = db.get_user(telegram_id)
+    if user is None:
+        await callback.answer("Foydalanuvchi topilmadi.", show_alert=True)
+        return
+
+    bots = db.list_user_bots(telegram_id)
+    status_label = {"approved": "✅ Tasdiqlangan", "pending": "⏳ Kutilmoqda", "denied": "⛔️ Rad etilgan"}
+    start_date = datetime.fromtimestamp(user["created_at"]).strftime("%Y-%m-%d %H:%M")
+
+    if bots:
+        bots_lines = []
+        icon = {"running": "🟢 ishlayapti", "crashed": "🟡 qulagan", "stopped": "🔴 to'xtatilgan"}
+        for b in bots:
+            label = b["bot_username"] or b["display_name"] or f"Bot #{b['bot_id']}"
+            bots_lines.append(f"• {html.escape(label)} — {icon.get(b['status'], b['status'])}")
+        bots_text = "\n".join(bots_lines)
+    else:
+        bots_text = "— hali bot deploy qilmagan —"
+
+    text = (
+        f"👤 <b>{html.escape(user['first_name'] or 'Nomsiz')}</b>"
+        f"{' (@' + user['username'] + ')' if user['username'] else ''}\n"
+        f"🆔 ID: <code>{user['telegram_id']}</code>\n"
+        f"Holati: {status_label.get(user['status'], user['status'])}\n"
+        f"/start bosgan sana: {start_date}\n"
+        f"⭐️ Balans: <b>{user['balance_stars']}</b> stars\n\n"
+        f"<b>Botlari ({len(bots)}):</b>\n{bots_text}"
+    )
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=admin_user_view_kb(telegram_id, bots))
+    await callback.answer()
 
 
 @router.callback_query(F.data == "admin_all_bots")
