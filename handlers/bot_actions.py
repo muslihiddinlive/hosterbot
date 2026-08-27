@@ -11,6 +11,7 @@ from config import is_admin
 from states import ConfirmDelete
 from keyboards import bot_manage_kb, admin_bot_view_kb, cancel_kb, main_menu_kb
 from services.deploy_manager import start_bot_process, stop_bot_process, read_log_tail
+from services.resource_monitor import can_start_new_bot
 from services.file_utils import cleanup_bot_files, write_env_file
 from services.backup import backup_database
 
@@ -34,6 +35,15 @@ async def cb_bot_start(callback: CallbackQuery, bot: Bot):
     bot_row = db.get_bot(bot_id)
     if not _authorized(callback, bot_row):
         await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+
+    allowed, used_mb, budget_mb = can_start_new_bot()
+    if not allowed:
+        await callback.answer(
+            f"⚠️ RAM byudjeti tugagan ({used_mb:.0f}/{budget_mb} MB band). "
+            f"Avval boshqa botni to'xtating.",
+            show_alert=True,
+        )
         return
 
     envs = {row["key"]: row["value"] for row in db.list_envs(bot_id)}

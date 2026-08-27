@@ -45,6 +45,16 @@ PORT = int(os.environ.get("PORT", "10000"))
 BOT_MEMORY_LIMIT_MB = int(os.environ.get("BOT_MEMORY_LIMIT_MB", "2048"))
 BOT_CPU_TIME_LIMIT_SEC = int(os.environ.get("BOT_CPU_TIME_LIMIT_SEC", "0"))  # 0 = cheklanmagan
 
+# Render Free Tier'da jami atigi 512 MB FIZIK RAM bor — platformaning o'zi + BARCHA
+# hosted botlar shu ichiga sig'ishi kerak (BOT_MEMORY_LIMIT_MB yuqoridagi kabi faqat
+# virtual manzil maydonini cheklaydi, haqiqiy RAM'ni emas). Shu sabab yangi bot ishga
+# tushirishdan oldin HAQIQIY umumiy RSS sarfini tekshirib, byudjetdan oshib ketsa
+# oldindan rad etamiz — aks holda Render OOM-kill qilib, tasodifiy (aybsiz) boshqa
+# botlarni ham ag'darib yuborishi mumkin edi. ~90 MB'ni tizim/Python interpretatori
+# uchun zahira qilib, byudjetni 512'dan pastroq qo'yamiz. Kattaroq instansiyada
+# ENV orqali oshiring.
+TOTAL_RAM_BUDGET_MB = int(os.environ.get("TOTAL_RAM_BUDGET_MB", "420"))
+
 DATA_DIR = os.path.join(os.path.dirname(__file__), "bots_data")
 DB_PATH = os.path.join(os.path.dirname(__file__), "platform.db")
 

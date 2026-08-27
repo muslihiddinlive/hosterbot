@@ -231,6 +231,13 @@ def is_running(bot_id: int) -> bool:
     return proc.poll() is None
 
 
+def list_running_pids() -> dict[int, int]:
+    """Hozir tirik deb hisoblangan (proc.poll() is None) barcha bot_id -> pid
+    juftlarini qaytaradi. resource_monitor bu orqali RAM sarfini yig'adi —
+    boshqa modullar _running_processes'ga to'g'ridan-to'g'ri tegmasligi uchun."""
+    return {bot_id: proc.pid for bot_id, proc in _running_processes.items() if proc.poll() is None}
+
+
 def read_log_tail(workdir: str, n_lines: int = 60) -> str:
     log_path = os.path.join(workdir, "run.log")
     if not os.path.exists(log_path):

@@ -18,6 +18,7 @@ from services.file_utils import (
     list_py_files_in_zip, resolve_start_command, fix_all_py_encodings,
 )
 from services.deploy_manager import run_build_command, start_bot_process, static_scan, read_log_tail, is_running
+from services.resource_monitor import can_start_new_bot
 from services.backup import backup_database
 
 router = Router()
@@ -401,6 +402,23 @@ async def finalize_deploy(message: Message, state: FSMContext, bot: Bot):
         error_tail = read_log_tail(workdir, n_lines=40)
         await message.answer(
             f"❌ <b>Build bosqichida xatolik yuz berdi:</b>\n\n<pre>{html.escape(error_tail[-3500:])}</pre>",
+            parse_mode="HTML",
+        )
+        return
+
+    # Serverning umumiy fizik RAM byudjetiga sig'ish-sig'masligini tekshiramiz —
+    # build muvaffaqiyatli bo'lsa ham, RAM yetmasa yangi botni ishga tushirmaymiz
+    # (aks holda Render OOM-kill qilib, boshqa aybsiz botlarni ham ag'darib
+    # yuborishi mumkin edi).
+    allowed, used_mb, budget_mb = can_start_new_bot()
+    if not allowed:
+        db.set_bot_status(bot_id, "stopped")
+        await backup_database(bot)
+        await message.answer(
+            f"⚠️ <b>Bot build bo'ldi, lekin hozircha ishga tushirilmadi.</b>\n\n"
+            f"Serverning RAM byudjeti tugagan ({used_mb:.0f}/{budget_mb} MB band). "
+            f"Boshqa botni to'xtatib, keyin \"Mening botlarim\" bo'limidan qo'lda "
+            f"ishga tushirishingiz mumkin.",
             parse_mode="HTML",
         )
         return

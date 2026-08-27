@@ -59,9 +59,20 @@ async def restore_running_bots(bot: Bot):
         workdir = bot_workdir(bot_id)
         start_cmd = bot_row["start_cmd"]
 
-        code_missing = not any(
-            f.endswith(".py") for f in os.listdir(workdir)
-        ) if os.path.isdir(workdir) else True
+        # DIQQAT (bug fix): oldin faqat top-level papka tekshirilardi
+        # (os.listdir). Zip orqali deploy qilingan botlarda haqiqiy kod
+        # ko'pincha ichki "wrapper" papkada turadi (resolve_project_root),
+        # shu sabab bu tekshiruv HAR DOIM "code_missing=True" berardi —
+        # hatto kod diskda hali joyida bo'lsa ham. Natijada har restart'da
+        # keraksiz qayta-yuklash bo'lardi, va agar bot.download() muvaffaqiyatsiz
+        # bo'lsa, sog'lom bot bekorga "crashed" deb belgilanardi.
+        # Endi butun daraxt (os.walk) bo'yicha tekshiramiz.
+        code_missing = True
+        if os.path.isdir(workdir):
+            for _, _, files in os.walk(workdir):
+                if any(f.endswith(".py") for f in files):
+                    code_missing = False
+                    break
 
         if code_missing:
             if not bot_row["storage_file_id"]:
@@ -85,6 +96,12 @@ async def restore_running_bots(bot: Bot):
                 log.warning(f"{label}: kodni tiklashda xato: {e}")
                 db.set_bot_status(bot_id, "crashed", None)
                 continue
+        elif bot_row["is_zip"]:
+            # Kod diskda hali joyida (disk o'chmagan) — lekin zip botlarda haqiqiy
+            # loyiha ichki wrapper papkada bo'lishi mumkin. workdir'ni shunga moslab
+            # resolve qilmasak, keyingi build/start/log yo'llari noto'g'ri
+            # (tashqi, bo'sh) papkaga ishora qilib qoladi.
+            workdir = resolve_project_root(workdir)
 
         envs = {e["key"]: e["value"] for e in db.list_envs(bot_id)}
         try:
