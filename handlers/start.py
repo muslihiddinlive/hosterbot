@@ -6,7 +6,7 @@ from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 
 import database as db
-from config import ADMIN_IDS, SUPERADMIN_IDS, is_admin, STARS_PER_UNIT
+from config import ADMIN_IDS, SUPERADMIN_IDS, is_admin
 from states import ContactAdmin
 from keyboards import main_menu_kb, cancel_kb, admin_review_kb, self_service_menu_kb
 
@@ -53,7 +53,7 @@ async def cmd_start(message: Message, state: FSMContext):
         "Bu bot orqali siz o'z Telegram botlaringizni deploy qila olasiz. Ikkita yo'l bor:\n\n"
         "1️⃣ Adminga xabar yuboring — u tasdiqlagach, bepul cheklovsiz foydalanasiz\n"
         f"2️⃣ \"💳 Hisob\"dan Stars bilan to'lab, admin tasdig'isiz darhol o'zingiz host qiling "
-        f"({STARS_PER_UNIT} ⭐️ = 24 soat)\n\n"
+        f"({db.get_stars_per_unit()} ⭐️ = 24 soat)\n\n"
         "Quyidagi tugmalardan birini tanlang:",
         reply_markup=self_service_menu_kb(),
     )

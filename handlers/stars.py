@@ -20,7 +20,7 @@ from aiogram.types import CallbackQuery, Message, LabeledPrice, PreCheckoutQuery
 from aiogram.fsm.context import FSMContext
 
 import database as db
-from config import STARS_PER_UNIT, SECONDS_PER_UNIT, is_admin
+from config import is_admin
 from states import StarsTopUp
 from keyboards import hisob_kb, cancel_kb, main_menu_kb
 from services.deploy_manager import start_bot_process, is_running
@@ -50,6 +50,7 @@ def format_remaining(seconds: int) -> str:
 async def show_balance(message: Message):
     db.upsert_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
     balance = db.get_user_balance(message.from_user.id)
+    stars_per_unit = db.get_stars_per_unit()
     now = int(time.time())
 
     hosted_bots = [
@@ -59,7 +60,7 @@ async def show_balance(message: Message):
 
     lines = [
         f"⭐️ <b>Balansingiz: {balance} stars</b>\n",
-        f"Narx: <b>{STARS_PER_UNIT} stars = 24 soat</b> hosting (1 bot uchun), soniyagacha aniq hisoblanadi.",
+        f"Narx: <b>{db.get_stars_per_unit()} stars = 24 soat</b> hosting (1 bot uchun), soniyagacha aniq hisoblanadi.",
     ]
     if hosted_bots:
         lines.append("\n<b>Stars orqali hostlangan botlaringiz:</b>")
@@ -80,7 +81,7 @@ async def show_balance(message: Message):
 async def cb_stars_topup(callback: CallbackQuery, state: FSMContext):
     await state.set_state(StarsTopUp.waiting_amount)
     await callback.message.answer(
-        f"Necha ⭐️ Stars to'lamoqchisiz? Raqam yozing (masalan: {STARS_PER_UNIT} — bu 24 soatlik hosting narxi).\n\n"
+        f"Necha ⭐️ Stars to'lamoqchisiz? Raqam yozing (masalan: {db.get_stars_per_unit()} — bu 24 soatlik hosting narxi).\n\n"
         f"Ko'proq to'lasangiz, balansingizga qo'shilib qoladi — botlaringizni istalgan vaqt uzaytirish uchun ishlatasiz.",
     )
     await callback.answer()
@@ -98,7 +99,7 @@ async def stars_amount_entered(message: Message, state: FSMContext):
 
     await message.answer_invoice(
         title=f"{amount} ⭐️ Stars — HosterBot balans",
-        description=f"Balansingizga {amount} Stars qo'shiladi. {STARS_PER_UNIT} stars = 24 soat bot hosting.",
+        description=f"Balansingizga {amount} Stars qo'shiladi. {db.get_stars_per_unit()} stars = 24 soat bot hosting.",
         payload=f"topup_{message.from_user.id}_{amount}",
         provider_token="",  # Telegram Stars uchun bo'sh qoldiriladi
         currency="XTR",
@@ -137,18 +138,20 @@ async def cb_stars_extend(callback: CallbackQuery, bot: Bot):
         await callback.answer("Ruxsat yo'q.", show_alert=True)
         return
 
+    stars_per_unit = db.get_stars_per_unit()
+    seconds_per_unit = db.get_seconds_per_unit()
     balance = db.get_user_balance(bot_row["owner_id"])
-    if balance < STARS_PER_UNIT:
+    if balance < stars_per_unit:
         await callback.answer(
-            f"⭐️ Balansingiz yetarli emas ({balance}/{STARS_PER_UNIT}). Avval to'ldiring.",
+            f"⭐️ Balansingiz yetarli emas ({balance}/{stars_per_unit}). Avval to'ldiring.",
             show_alert=True,
         )
         return
 
-    db.add_user_balance(bot_row["owner_id"], -STARS_PER_UNIT)
+    db.add_user_balance(bot_row["owner_id"], -stars_per_unit)
     now = int(time.time())
     base = bot_row["paid_until"] if (bot_row["paid_until"] and bot_row["paid_until"] > now) else now
-    new_paid_until = base + SECONDS_PER_UNIT
+    new_paid_until = base + seconds_per_unit
     db.set_bot_stars_payment(bot_id, new_paid_until)
 
     # Agar bot muddati tugab to'xtagan bo'lsa, RAM byudjetini tekshirib qayta ishga tushiramiz
@@ -166,4 +169,4 @@ async def cb_stars_extend(callback: CallbackQuery, bot: Bot):
         db.set_bot_status(bot_id, "running", pid)
 
     remaining = new_paid_until - now
-    await callback.answer(f"✅ Yana {STARS_PER_UNIT}⭐️ yechildi. Qolgan vaqt: {format_remaining(remaining)}", show_alert=True)
+    await callback.answer(f"✅ Yana {stars_per_unit}⭐️ yechildi. Qolgan vaqt: {format_remaining(remaining)}", show_alert=True)

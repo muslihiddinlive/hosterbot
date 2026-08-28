@@ -6,9 +6,9 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 
 import database as db
-from config import is_admin, STORAGE_GROUP_ID
-from states import AdminMessageUser, AdminSetLimit
-from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb
+from config import is_admin, is_superadmin, STORAGE_GROUP_ID
+from states import AdminMessageUser, AdminSetLimit, AdminStarsSetting
+from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb
 from services.backup import backup_database
 
 router = Router()
@@ -43,8 +43,67 @@ async def cb_admin_panel_back(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         await callback.answer("Ruxsat yo'q.", show_alert=True)
         return
-    await callback.message.edit_text("Admin panel:", reply_markup=admin_panel_kb())
+    await callback.message.edit_text("Admin panel:", reply_markup=admin_panel_kb(is_superadmin=is_superadmin(callback.from_user.id)))
     await callback.answer()
+
+
+@router.callback_query(F.data == "admin_stars_settings")
+async def cb_admin_stars_settings(callback: CallbackQuery):
+    if not is_superadmin(callback.from_user.id):
+        await callback.answer("Bu faqat superadminlar uchun.", show_alert=True)
+        return
+    amount = db.get_stars_per_unit()
+    hours = db.get_seconds_per_unit() // 3600
+    await callback.message.edit_text(
+        f"⭐️ <b>Stars narxi sozlamalari</b>\n\n"
+        f"Hozirgi narx: <b>{amount} stars = {hours} soat</b> hosting.\n"
+        f"Bu qiymat darhol o'zgaradi, redeploy shart emas.",
+        parse_mode="HTML",
+        reply_markup=admin_stars_settings_kb(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_set_stars_amount")
+async def cb_admin_set_stars_amount(callback: CallbackQuery, state: FSMContext):
+    if not is_superadmin(callback.from_user.id):
+        await callback.answer("Bu faqat superadminlar uchun.", show_alert=True)
+        return
+    await state.set_state(AdminStarsSetting.waiting_amount)
+    await callback.message.answer(f"Yangi qiymat: nechta stars 1 birlik hosting narxi bo'lsin? Raqam yozing (hozir: {db.get_stars_per_unit()}).")
+    await callback.answer()
+
+
+@router.message(AdminStarsSetting.waiting_amount)
+async def set_stars_amount(message: Message, state: FSMContext):
+    await state.clear()
+    text = (message.text or "").strip()
+    if not text.isdigit() or int(text) <= 0:
+        await message.answer("Musbat butun son yuboring.")
+        return
+    db.set_setting("stars_per_unit", int(text))
+    await message.answer(f"✅ Endi {text} stars = {db.get_seconds_per_unit() // 3600} soat hosting.")
+
+
+@router.callback_query(F.data == "admin_set_stars_hours")
+async def cb_admin_set_stars_hours(callback: CallbackQuery, state: FSMContext):
+    if not is_superadmin(callback.from_user.id):
+        await callback.answer("Bu faqat superadminlar uchun.", show_alert=True)
+        return
+    await state.set_state(AdminStarsSetting.waiting_hours)
+    await callback.message.answer(f"Yangi muddat: necha soatlik hosting bo'lsin? Raqam yozing (hozir: {db.get_seconds_per_unit() // 3600}).")
+    await callback.answer()
+
+
+@router.message(AdminStarsSetting.waiting_hours)
+async def set_stars_hours(message: Message, state: FSMContext):
+    await state.clear()
+    text = (message.text or "").strip()
+    if not text.isdigit() or int(text) <= 0:
+        await message.answer("Musbat butun son yuboring.")
+        return
+    db.set_setting("seconds_per_unit", int(text) * 3600)
+    await message.answer(f"✅ Endi {db.get_stars_per_unit()} stars = {text} soat hosting.")
 
 
 @router.callback_query(F.data == "admin_users")

@@ -9,7 +9,7 @@ from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 
 import database as db
-from config import MAX_BOTS_PER_USER, STORAGE_GROUP_ID, SUPERADMIN_IDS, ADMIN_IDS, is_admin, STARS_PER_UNIT, SECONDS_PER_UNIT
+from config import MAX_BOTS_PER_USER, STORAGE_GROUP_ID, SUPERADMIN_IDS, ADMIN_IDS, is_admin
 from states import AddBot
 from keyboards import cancel_kb, skip_or_add_env_kb, env_added_kb, main_menu_kb, skip_requirements_kb, auto_build_kb
 from services.file_utils import (
@@ -36,12 +36,14 @@ async def add_bot_start(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         approved = db.is_user_approved(message.from_user.id)
         balance = db.get_user_balance(message.from_user.id)
-        if not approved and balance < STARS_PER_UNIT:
+        stars_per_unit = db.get_stars_per_unit()
+        seconds_per_unit = db.get_seconds_per_unit()
+        if not approved and balance < stars_per_unit:
             await message.answer(
                 f"Bot host qilish uchun 2 ta yo'l bor:\n\n"
                 f"1️⃣ Admin tomonidan tasdiqlanish — \"📩 Adminga habar berish\"\n"
                 f"2️⃣ O'zingiz Stars orqali to'lab, darhol host qilish — \"💳 Hisob\" "
-                f"(kamida {STARS_PER_UNIT} ⭐️ kerak, bu {SECONDS_PER_UNIT // 3600} soatlik hosting)"
+                f"(kamida {stars_per_unit} ⭐️ kerak, bu {seconds_per_unit // 3600} soatlik hosting)"
             )
             return
 
@@ -439,18 +441,20 @@ async def finalize_deploy(message: Message, state: FSMContext, bot: Bot):
     # Balansni QAYTA tekshiramiz (race condition himoyasi: masalan build paytida
     # boshqa oynada balansni sarflab qo'ygan bo'lishi mumkin).
     stars_flow = not db.is_user_approved(owner_id)
+    seconds_per_unit = db.get_seconds_per_unit()
     if stars_flow:
+        stars_per_unit = db.get_stars_per_unit()
         balance = db.get_user_balance(owner_id)
-        if balance < STARS_PER_UNIT:
+        if balance < stars_per_unit:
             db.set_bot_status(bot_id, "stopped")
             await backup_database(bot)
             await message.answer(
-                f"⚠️ Build muvaffaqiyatli bo'ldi, lekin balansingiz yetarli emas ({balance}/{STARS_PER_UNIT} ⭐️). "
+                f"⚠️ Build muvaffaqiyatli bo'ldi, lekin balansingiz yetarli emas ({balance}/{stars_per_unit} ⭐️). "
                 f"\"💳 Hisob\" orqali to'ldiring, so'ng \"Mening botlarim\"dan ishga tushiring.",
             )
             return
-        db.add_user_balance(owner_id, -STARS_PER_UNIT)
-        paid_until = int(time.time()) + SECONDS_PER_UNIT
+        db.add_user_balance(owner_id, -stars_per_unit)
+        paid_until = int(time.time()) + seconds_per_unit
         db.set_bot_stars_payment(bot_id, paid_until)
 
     pid = start_bot_process(bot_id, workdir, start_cmd, envs)
@@ -490,7 +494,7 @@ async def finalize_deploy(message: Message, state: FSMContext, bot: Bot):
 
     stars_text = ""
     if stars_flow:
-        stars_text = f"\n⭐️ Stars orqali hostlandi — qolgan vaqt: {format_remaining(SECONDS_PER_UNIT)}"
+        stars_text = f"\n⭐️ Stars orqali hostlandi — qolgan vaqt: {format_remaining(seconds_per_unit)}"
 
     await message.answer(f"✅ <b>Bot deploy bo'ldi va ishlab turibdi!</b>{username_text}{stars_text}", parse_mode="HTML")
     await backup_database(bot)

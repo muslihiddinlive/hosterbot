@@ -31,3 +31,8 @@ class StarsTopUp(StatesGroup):
 
 class AdminSetLimit(StatesGroup):
     waiting_number = State()
+
+
+class AdminStarsSetting(StatesGroup):
+    waiting_amount = State()
+    waiting_hours = State()

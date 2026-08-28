@@ -5,7 +5,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 import database as db
-from config import is_admin
+from config import is_admin, is_superadmin
 from states import ContactAdmin
 from keyboards import cancel_kb, my_bots_list_kb, bot_manage_kb, admin_panel_kb
 
@@ -54,4 +54,4 @@ async def manage_bot(callback: CallbackQuery):
 async def admin_panel_entry(message: Message):
     if not is_admin(message.from_user.id):
         return
-    await message.answer("Admin panel:", reply_markup=admin_panel_kb())
+    await message.answer("Admin panel:", reply_markup=admin_panel_kb(is_superadmin=is_superadmin(message.from_user.id)))

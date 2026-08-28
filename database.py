@@ -13,7 +13,7 @@ import sqlite3
 import time
 from contextlib import contextmanager
 
-from config import DB_PATH, is_admin
+from config import DB_PATH, is_admin, STARS_PER_UNIT as DEFAULT_STARS_PER_UNIT, SECONDS_PER_UNIT as DEFAULT_SECONDS_PER_UNIT
 from services.crypto_utils import encrypt_value, decrypt_value
 
 SCHEMA = """
@@ -62,6 +62,11 @@ CREATE TABLE IF NOT EXISTS bot_envs (
     key             TEXT NOT NULL,
     value           TEXT NOT NULL,
     FOREIGN KEY (bot_id) REFERENCES bots(bot_id)
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key             TEXT PRIMARY KEY,
+    value           TEXT NOT NULL
 );
 """
 
@@ -164,6 +169,31 @@ def set_user_max_bots(telegram_id: int, max_bots):
 def get_user_max_bots(telegram_id: int):
     row = get_user(telegram_id)
     return row["max_bots"] if row else None
+
+
+def get_setting(key: str, default=None):
+    with get_conn() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else default
+
+
+def set_setting(key: str, value):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, str(value)),
+        )
+
+
+def get_stars_per_unit() -> int:
+    """Superadmin panelidan o'zgartirilishi mumkin — DB'da yozilgan bo'lsa o'shani,
+    aks holda config.py'dagi standart qiymatni qaytaradi (ENV o'zgartirish/redeploy shart emas)."""
+    return int(get_setting("stars_per_unit", DEFAULT_STARS_PER_UNIT))
+
+
+def get_seconds_per_unit() -> int:
+    return int(get_setting("seconds_per_unit", DEFAULT_SECONDS_PER_UNIT))
 
 
 def is_user_approved(telegram_id: int) -> bool:

@@ -2,6 +2,7 @@ from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton,
     InlineKeyboardMarkup, InlineKeyboardButton,
 )
+import database as db
 
 # ---------- Reply keyboard (approve bo'lgan userlar uchun asosiy menu) ----------
 
@@ -88,6 +89,14 @@ def hisob_kb(hosted_bots) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def admin_stars_settings_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ Stars miqdorini o'zgartirish", callback_data="admin_set_stars_amount")],
+        [InlineKeyboardButton(text="✏️ Muddatni o'zgartirish (soat)", callback_data="admin_set_stars_hours")],
+        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_panel_back")],
+    ])
+
+
 def admin_review_kb(request_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -120,7 +129,7 @@ def bot_manage_kb(bot_row) -> InlineKeyboardMarkup:
     ]
     if bot_row["stars_hosted"]:
         rows.append([InlineKeyboardButton(
-            text="🔁 Yana 24 soatga uzaytirish (3⭐️)", callback_data=f"stars_extend:{bot_row['bot_id']}",
+            text=f"🔁 Yana 24 soatga uzaytirish ({db.get_stars_per_unit()}⭐️)", callback_data=f"stars_extend:{bot_row['bot_id']}",
         )])
     rows.append([InlineKeyboardButton(text="ℹ️ Bot haqida (kod/log/env)", callback_data=f"bot_info:{bot_row['bot_id']}")])
     rows.append([InlineKeyboardButton(text="🗑 O'chirish", callback_data=f"bot_delete:{bot_row['bot_id']}")])
@@ -128,12 +137,15 @@ def bot_manage_kb(bot_row) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def admin_panel_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
+def admin_panel_kb(is_superadmin: bool = False) -> InlineKeyboardMarkup:
+    rows = [
         [InlineKeyboardButton(text="👥 Foydalanuvchilar", callback_data="admin_users")],
         [InlineKeyboardButton(text="📋 Barcha botlar", callback_data="admin_all_bots")],
         [InlineKeyboardButton(text="➕ Bot deploy qilish (admin nomidan)", callback_data="admin_add_bot")],
-    ])
+    ]
+    if is_superadmin:
+        rows.append([InlineKeyboardButton(text="⭐️ Stars narxi sozlamalari", callback_data="admin_stars_settings")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def admin_users_kb(users) -> InlineKeyboardMarkup:
