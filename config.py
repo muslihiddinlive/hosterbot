@@ -23,6 +23,12 @@ STORAGE_GROUP_ID = int(os.environ["STORAGE_GROUP_ID"])
 
 MAX_BOTS_PER_USER = int(os.environ.get("MAX_BOTS_PER_USER", "3"))
 
+# ---- Telegram Stars orqali self-service hosting ----
+# STARS_PER_UNIT ta stars = SECONDS_PER_UNIT soniyaga (default: 3 stars = 24 soat)
+# hosting huquqi beradi. Admin tasdiqisiz, foydalanuvchi o'zi to'lab bot host qila oladi.
+STARS_PER_UNIT = int(os.environ.get("STARS_PER_UNIT", "3"))
+SECONDS_PER_UNIT = int(os.environ.get("SECONDS_PER_UNIT", str(24 * 3600)))
+
 # ---- Webhook (Render Free Tier Web Service uchun) ----
 # Render web service'lar avtomatik RENDER_EXTERNAL_URL beradi (masalan https://hosterbot.onrender.com).
 # Agar boshqa joyda host qilsangiz, WEBHOOK_BASE_URL ni qo'lda kiriting.

@@ -23,3 +23,11 @@ class ConfirmDelete(StatesGroup):
 
 class AdminMessageUser(StatesGroup):
     waiting_text = State()
+
+
+class StarsTopUp(StatesGroup):
+    waiting_amount = State()
+
+
+class AdminSetLimit(StatesGroup):
+    waiting_number = State()

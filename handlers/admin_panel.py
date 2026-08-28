@@ -7,7 +7,7 @@ from aiogram.fsm.context import FSMContext
 
 import database as db
 from config import is_admin, STORAGE_GROUP_ID
-from states import AdminMessageUser
+from states import AdminMessageUser, AdminSetLimit
 from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb
 from services.backup import backup_database
 
@@ -100,7 +100,10 @@ async def cb_admin_user_view(callback: CallbackQuery):
         f"⭐️ Balans: <b>{user['balance_stars']}</b> stars\n\n"
         f"<b>Botlari ({len(bots)}):</b>\n{bots_text}"
     )
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=admin_user_view_kb(telegram_id, bots))
+    await callback.message.edit_text(
+        text, parse_mode="HTML",
+        reply_markup=admin_user_view_kb(telegram_id, bots, current_max_bots=user["max_bots"]),
+    )
     await callback.answer()
 
 
@@ -192,6 +195,41 @@ async def send_admin_msg(message: Message, state: FSMContext, bot: Bot):
         await message.answer("Xabar yuborildi ✅")
     except Exception:
         await message.answer("Xabar yuborilmadi (foydalanuvchi botni bloklagan bo'lishi mumkin).")
+
+
+@router.callback_query(F.data.startswith("admin_set_limit:"))
+async def cb_admin_set_limit(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+    target_id = int(callback.data.split(":")[1])
+    await state.update_data(limit_target_id=target_id)
+    await state.set_state(AdminSetLimit.waiting_number)
+    await callback.message.answer(
+        "Bu foydalanuvchi uchun nechta bot host qilishga ruxsat berasiz? Raqam yozing.\n"
+        "0 yozsangiz — global standart limitga qaytaradi (default sozlamaga)."
+    )
+    await callback.answer()
+
+
+@router.message(AdminSetLimit.waiting_number)
+async def set_limit_number(message: Message, state: FSMContext):
+    data = await state.get_data()
+    target_id = data.get("limit_target_id")
+    await state.clear()
+
+    text = (message.text or "").strip()
+    if not text.lstrip("-").isdigit():
+        await message.answer("Iltimos, faqat raqam yuboring (masalan: 5).")
+        return
+
+    n = int(text)
+    if n <= 0:
+        db.set_user_max_bots(target_id, None)
+        await message.answer("✅ Bu foydalanuvchi uchun global standart limit qaytarildi.")
+    else:
+        db.set_user_max_bots(target_id, n)
+        await message.answer(f"✅ Bu foydalanuvchi uchun limit endi: {n} ta bot.")
 
 
 @router.callback_query(F.data == "admin_add_bot")

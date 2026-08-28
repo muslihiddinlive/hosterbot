@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS users (
     status          TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | denied
     created_at      INTEGER NOT NULL,
     approved_at     INTEGER,
-    balance_stars   INTEGER NOT NULL DEFAULT 0  -- Telegram Stars prepaid balans (kelajakdagi pay-as-you-go hosting uchun)
+    balance_stars   INTEGER NOT NULL DEFAULT 0,  -- Telegram Stars prepaid balans
+    max_bots        INTEGER  -- admin belgilagan individual limit (NULL = global MAX_BOTS_PER_USER ishlatiladi)
 );
 
 CREATE TABLE IF NOT EXISTS pending_requests (
@@ -50,7 +51,9 @@ CREATE TABLE IF NOT EXISTS bots (
     status          TEXT NOT NULL DEFAULT 'stopped',  -- running | stopped | crashed
     pid             INTEGER,
     created_at      INTEGER NOT NULL,
-    deployed_by      INTEGER              -- superadmin o'rniga deploy qilgan bo'lsa uning id'si
+    deployed_by      INTEGER,             -- superadmin o'rniga deploy qilgan bo'lsa uning id'si
+    stars_hosted    INTEGER NOT NULL DEFAULT 0,  -- 1 = admin tasdiqisiz, Stars balansidan hostlangan bot
+    paid_until      INTEGER               -- stars_hosted bot uchun: shu vaqtgacha ishlash huquqi to'langan (epoch)
 );
 
 CREATE TABLE IF NOT EXISTS bot_envs (
@@ -87,6 +90,18 @@ def init_db():
             conn.execute("ALTER TABLE users ADD COLUMN balance_stars INTEGER NOT NULL DEFAULT 0")
         except sqlite3.OperationalError:
             pass  # ustun allaqachon mavjud
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN max_bots INTEGER")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE bots ADD COLUMN stars_hosted INTEGER NOT NULL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE bots ADD COLUMN paid_until INTEGER")
+        except sqlite3.OperationalError:
+            pass
 
 
 # ---------- users ----------
@@ -133,6 +148,22 @@ def set_user_status(telegram_id: int, status: str):
             "UPDATE users SET status=?, approved_at=COALESCE(?, approved_at) WHERE telegram_id=?",
             (status, approved_at, telegram_id),
         )
+
+
+def get_user_balance(telegram_id: int) -> int:
+    row = get_user(telegram_id)
+    return row["balance_stars"] if row else 0
+
+
+def set_user_max_bots(telegram_id: int, max_bots):
+    """max_bots=None qilib qo'ysangiz, foydalanuvchi yana global MAX_BOTS_PER_USER'ga qaytadi."""
+    with get_conn() as conn:
+        conn.execute("UPDATE users SET max_bots=? WHERE telegram_id=?", (max_bots, telegram_id))
+
+
+def get_user_max_bots(telegram_id: int):
+    row = get_user(telegram_id)
+    return row["max_bots"] if row else None
 
 
 def is_user_approved(telegram_id: int) -> bool:
@@ -220,6 +251,26 @@ def set_bot_username(bot_id: int, username: str):
 def delete_bot(bot_id: int):
     with get_conn() as conn:
         conn.execute("UPDATE bots SET status='deleted' WHERE bot_id=?", (bot_id,))
+
+
+def set_bot_stars_payment(bot_id: int, paid_until: int):
+    """Botni stars_hosted deb belgilaydi va paid_until'ni (epoch) yozadi.
+    Stars orqali deploy/uzaytirishda ishlatiladi."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE bots SET stars_hosted=1, paid_until=? WHERE bot_id=?",
+            (paid_until, bot_id),
+        )
+
+
+def list_expired_stars_bots():
+    """Hozir 'running' holatda turgan, lekin to'lov muddati o'tib ketgan stars_hosted botlar."""
+    now = int(time.time())
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM bots WHERE stars_hosted=1 AND status='running' AND paid_until IS NOT NULL AND paid_until <= ?",
+            (now,),
+        ).fetchall()
 
 
 # ---------- envs ----------

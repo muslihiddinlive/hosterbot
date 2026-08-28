@@ -9,6 +9,7 @@ def main_menu_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton(text="📩 Adminga habar berish")],
         [KeyboardButton(text="🤖 Mening botlarim"), KeyboardButton(text="➕ Bot qo'shish")],
+        [KeyboardButton(text="💳 Hisob")],
     ]
     if is_admin:
         rows.append([KeyboardButton(text="🛠 Admin panel")])
@@ -18,6 +19,19 @@ def main_menu_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
 
 def cancel_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="⛔️ Bekor qilish")]], resize_keyboard=True)
+
+
+def self_service_menu_kb() -> ReplyKeyboardMarkup:
+    """Admin tomonidan hali tasdiqlanmagan (pending/yangi/denied) foydalanuvchilar uchun —
+    ular admin tasdig'isiz ham Stars orqali o'zlari bot host qila olishlari kerak."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="💳 Hisob")],
+            [KeyboardButton(text="🤖 Mening botlarim")],
+            [KeyboardButton(text="📩 Adminga habar berish")],
+        ],
+        resize_keyboard=True,
+    )
 
 
 def skip_requirements_kb() -> ReplyKeyboardMarkup:
@@ -63,6 +77,17 @@ def env_added_kb() -> ReplyKeyboardMarkup:
 
 # ---------- Inline keyboards ----------
 
+def hisob_kb(hosted_bots) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text="➕ Balansni to'ldirish (Stars)", callback_data="stars_topup")]]
+    for b in hosted_bots:
+        label = b["bot_username"] or b["display_name"] or f"Bot #{b['bot_id']}"
+        rows.append([InlineKeyboardButton(
+            text=f"🔁 {label} — yana +24 soat ({b['bot_id']})",
+            callback_data=f"stars_extend:{b['bot_id']}",
+        )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def admin_review_kb(request_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -90,12 +115,17 @@ def bot_manage_kb(bot_row) -> InlineKeyboardMarkup:
     running = bot_row["status"] == "running"
     toggle_text = "⏹ To'xtatish" if running else "▶️ Ishga tushirish"
     toggle_cb = f"bot_stop:{bot_row['bot_id']}" if running else f"bot_start:{bot_row['bot_id']}"
-    return InlineKeyboardMarkup(inline_keyboard=[
+    rows = [
         [InlineKeyboardButton(text=toggle_text, callback_data=toggle_cb)],
-        [InlineKeyboardButton(text="ℹ️ Bot haqida (kod/log/env)", callback_data=f"bot_info:{bot_row['bot_id']}")],
-        [InlineKeyboardButton(text="🗑 O'chirish", callback_data=f"bot_delete:{bot_row['bot_id']}")],
-        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="bot_list_back")],
-    ])
+    ]
+    if bot_row["stars_hosted"]:
+        rows.append([InlineKeyboardButton(
+            text="🔁 Yana 24 soatga uzaytirish (3⭐️)", callback_data=f"stars_extend:{bot_row['bot_id']}",
+        )])
+    rows.append([InlineKeyboardButton(text="ℹ️ Bot haqida (kod/log/env)", callback_data=f"bot_info:{bot_row['bot_id']}")])
+    rows.append([InlineKeyboardButton(text="🗑 O'chirish", callback_data=f"bot_delete:{bot_row['bot_id']}")])
+    rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="bot_list_back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def admin_panel_kb() -> InlineKeyboardMarkup:
@@ -117,12 +147,14 @@ def admin_users_kb(users) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def admin_user_view_kb(telegram_id: int, bots) -> InlineKeyboardMarkup:
+def admin_user_view_kb(telegram_id: int, bots, current_max_bots=None) -> InlineKeyboardMarkup:
     rows = []
     for b in bots:
         label = b["bot_username"] or b["display_name"] or f"Bot #{b['bot_id']}"
         status_icon = "🟢" if b["status"] == "running" else ("🟡" if b["status"] == "crashed" else "🔴")
         rows.append([InlineKeyboardButton(text=f"{status_icon} {label}", callback_data=f"admin_bot_view:{b['bot_id']}")])
+    limit_label = f"✏️ Bot limiti ({current_max_bots if current_max_bots is not None else 'default'})"
+    rows.append([InlineKeyboardButton(text=limit_label, callback_data=f"admin_set_limit:{telegram_id}")])
     rows.append([InlineKeyboardButton(text="✉️ Habar yozish", callback_data=f"admin_msg_user:{telegram_id}")])
     rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_users")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -147,6 +179,12 @@ def admin_bot_view_kb(bot_row) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="ℹ️ Kod/log/env", callback_data=f"bot_info:{bot_row['bot_id']}")],
         [InlineKeyboardButton(text="🗑 O'chirish", callback_data=f"bot_delete:{bot_row['bot_id']}")],
         [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_all_bots")],
+    ])
+
+
+def crash_notify_kb(bot_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Qayta ishga tushirish", callback_data=f"bot_start:{bot_id}")],
     ])
 
 

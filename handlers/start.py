@@ -6,9 +6,9 @@ from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 
 import database as db
-from config import ADMIN_IDS, SUPERADMIN_IDS, is_admin
+from config import ADMIN_IDS, SUPERADMIN_IDS, is_admin, STARS_PER_UNIT
 from states import ContactAdmin
-from keyboards import main_menu_kb, cancel_kb, admin_review_kb
+from keyboards import main_menu_kb, cancel_kb, admin_review_kb, self_service_menu_kb
 
 router = Router()
 
@@ -40,22 +40,23 @@ async def cmd_start(message: Message, state: FSMContext):
 
     if user["status"] == "pending":
         await message.answer(
-            "Salom! 👋 Siz allaqachon so'rov yubordingiz, admin javobini kuting.\n"
-            "Yangi xabar yuborish uchun pastdagi tugmani bosing yoki matn yozing.",
-            reply_markup=cancel_kb(),
+            "Salom! 👋 Siz allaqachon so'rov yubordingiz, admin javobini kuting.\n\n"
+            "Kutishni istamasangiz, \"💳 Hisob\" orqali Stars bilan to'lab, admin tasdig'isiz "
+            "o'zingiz ham bot host qila olasiz.",
+            reply_markup=self_service_menu_kb(),
         )
-        await state.set_state(ContactAdmin.waiting_message)
         return
 
     # yangi yoki denied bo'lgan user
     await message.answer(
         "Assalomu alaykum! 👋\n\n"
-        "Bu bot orqali siz o'z Telegram botlaringizni deploy qila olasiz.\n"
-        "Avval administratorga xabar yuboring — u tasdiqlagach, botdan to'liq foydalana olasiz.\n\n"
-        "Iltimos, adminga yubormoqchi bo'lgan xabaringizni yozing:",
-        reply_markup=cancel_kb(),
+        "Bu bot orqali siz o'z Telegram botlaringizni deploy qila olasiz. Ikkita yo'l bor:\n\n"
+        "1️⃣ Adminga xabar yuboring — u tasdiqlagach, bepul cheklovsiz foydalanasiz\n"
+        f"2️⃣ \"💳 Hisob\"dan Stars bilan to'lab, admin tasdig'isiz darhol o'zingiz host qiling "
+        f"({STARS_PER_UNIT} ⭐️ = 24 soat)\n\n"
+        "Quyidagi tugmalardan birini tanlang:",
+        reply_markup=self_service_menu_kb(),
     )
-    await state.set_state(ContactAdmin.waiting_message)
 
 
 @router.message(F.text == "⛔️ Bekor qilish")
@@ -65,7 +66,7 @@ async def cancel_any(message: Message, state: FSMContext):
     if user and user["status"] == "approved":
         await message.answer("Bekor qilindi.", reply_markup=main_menu_kb(is_admin=is_admin(message.from_user.id)))
     else:
-        await message.answer("Bekor qilindi. Qayta boshlash uchun /start bosing.")
+        await message.answer("Bekor qilindi.", reply_markup=self_service_menu_kb())
 
 
 @router.message(ContactAdmin.waiting_message)

@@ -14,18 +14,12 @@ router = Router()
 
 @router.message(F.text == "📩 Adminga habar berish")
 async def contact_admin_again(message: Message, state: FSMContext):
-    if not db.is_user_approved(message.from_user.id):
-        await message.answer("Avval admin tomonidan tasdiqlanishingiz kerak.")
-        return
     await message.answer("Adminga yubormoqchi bo'lgan xabaringizni yozing:", reply_markup=cancel_kb())
     await state.set_state(ContactAdmin.waiting_message)
 
 
 @router.message(F.text == "🤖 Mening botlarim")
 async def my_bots(message: Message):
-    if not db.is_user_approved(message.from_user.id):
-        await message.answer("Avval admin tomonidan tasdiqlanishingiz kerak.")
-        return
     bots = db.list_user_bots(message.from_user.id)
     if not bots:
         await message.answer("Siz hali birorta ham bot deploy qilmagansiz. \"➕ Bot qo'shish\" tugmasidan foydalaning.")

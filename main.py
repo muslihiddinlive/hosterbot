@@ -13,15 +13,17 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 from config import BOT_TOKEN, WEBHOOK_BASE_URL, WEBHOOK_PATH, PORT
 import database as db
 from services.backup import restore_database, backup_database
-from services.deploy_manager import is_running, read_log_tail, run_build_command, start_bot_process
+from services.deploy_manager import is_running, read_log_tail, run_build_command, start_bot_process, stop_bot_process
 from services.file_utils import (
     bot_workdir, extract_zip, resolve_project_root,
     normalize_requirements_filename, fix_all_py_encodings,
 )
+from keyboards import crash_notify_kb
 
-from handlers import start, admin_review, user_menu, add_bot, bot_actions, admin_panel
+from handlers import start, admin_review, user_menu, add_bot, bot_actions, admin_panel, stars
 
 WATCHDOG_INTERVAL_SEC = 60
+BILLING_WATCHDOG_INTERVAL_SEC = 30
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("hosterbot")
@@ -35,6 +37,7 @@ dp.include_router(user_menu.router)
 dp.include_router(add_bot.router)
 dp.include_router(bot_actions.router)
 dp.include_router(admin_panel.router)
+dp.include_router(stars.router)
 
 
 async def restore_running_bots(bot: Bot):
@@ -142,9 +145,9 @@ async def crash_watchdog():
                     await bot.send_message(
                         bot_row["owner_id"],
                         f"⚠️ <b>{html.escape(label)}</b> kutilmaganda to'xtab qoldi.\n\n"
-                        f"<b>So'nggi loglar:</b>\n<pre>{html.escape(crash_log[-2500:])}</pre>\n\n"
-                        f"\"Mening botlarim\" bo'limidan qayta ishga tushirishingiz mumkin.",
+                        f"<b>So'nggi loglar:</b>\n<pre>{html.escape(crash_log[-2500:])}</pre>",
                         parse_mode="HTML",
+                        reply_markup=crash_notify_kb(bot_row["bot_id"]),
                     )
                 except Exception:
                     pass
@@ -153,11 +156,40 @@ async def crash_watchdog():
             log.warning(f"Watchdog xatoligi: {e}")
 
 
+async def billing_watchdog():
+    """
+    Har BILLING_WATCHDOG_INTERVAL_SEC soniyada Stars orqali (admin tasdig'isiz)
+    hostlangan, lekin to'lov muddati (paid_until) o'tib ketgan botlarni to'xtatadi
+    va egasiga balansni to'ldirishni taklif qiladi.
+    """
+    while True:
+        await asyncio.sleep(BILLING_WATCHDOG_INTERVAL_SEC)
+        try:
+            for bot_row in db.list_expired_stars_bots():
+                bot_id = bot_row["bot_id"]
+                label = bot_row["bot_username"] or bot_row["display_name"] or f"Bot #{bot_id}"
+                stop_bot_process(bot_id)
+                db.set_bot_status(bot_id, "stopped", None)
+                try:
+                    await bot.send_message(
+                        bot_row["owner_id"],
+                        f"⏱ <b>{html.escape(label)}</b> uchun to'langan vaqt tugadi, bot to'xtatildi.\n\n"
+                        f"\"💳 Hisob\" orqali balansingizni to'ldirib, botni yana uzaytirishingiz mumkin.",
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
+                await backup_database(bot)
+        except Exception as e:
+            log.warning(f"Billing watchdog xatoligi: {e}")
+
+
 async def on_startup(app: web.Application):
     await restore_database(bot)
     db.init_db()
     await restore_running_bots(bot)
     asyncio.create_task(crash_watchdog())
+    asyncio.create_task(billing_watchdog())
 
     if not WEBHOOK_BASE_URL:
         log.warning(
