@@ -1,6 +1,7 @@
 import html
 import logging
 import os
+import asyncio
 
 from aiogram import Router, F, Bot
 from aiogram.types import CallbackQuery, Message, FSInputFile
@@ -10,8 +11,8 @@ import database as db
 from config import is_admin
 from states import ConfirmDelete
 from keyboards import bot_manage_kb, admin_bot_view_kb, cancel_kb, main_menu_kb
-from services.deploy_manager import start_bot_process, stop_bot_process, read_log_tail
-from services.resource_monitor import can_start_new_bot
+from services.deploy_manager import start_bot_process, stop_bot_process, read_log_tail, is_running
+from services.resource_monitor import can_start_new_bot, bot_ram_mb
 from services.file_utils import cleanup_bot_files, write_env_file
 from services.backup import backup_database
 
@@ -178,3 +179,65 @@ async def cb_bot_info(callback: CallbackQuery, bot: Bot):
             pass
 
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bot_resource:"))
+async def cb_bot_resource(callback: CallbackQuery):
+    bot_id = int(callback.data.split(":")[1])
+    bot_row = db.get_bot(bot_id)
+    if not _authorized(callback, bot_row):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+
+    if bot_row["status"] != "running" or not is_running(bot_id):
+        await callback.answer("Bot hozir ishlamayapti — resurs sarfini ko'rsatib bo'lmaydi.", show_alert=True)
+        return
+
+    ram_mb = bot_ram_mb(bot_id)
+    allowed, used_mb, budget_mb = can_start_new_bot()
+    await callback.answer(
+        f"💾 Bu bot: {ram_mb:.1f} MB RAM\n"
+        f"Server umumiy: {used_mb:.0f}/{budget_mb} MB band",
+        show_alert=True,
+    )
+
+
+@router.callback_query(F.data.startswith("bot_live_log:"))
+async def cb_bot_live_log(callback: CallbackQuery):
+    bot_id = int(callback.data.split(":")[1])
+    bot_row = db.get_bot(bot_id)
+    if not _authorized(callback, bot_row):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+
+    await callback.answer()
+    label = bot_row["bot_username"] or bot_row["display_name"] or f"Bot #{bot_id}"
+    msg = await callback.message.answer(f"📡 <b>{html.escape(label)}</b> — live log (30 soniya yangilanadi)...", parse_mode="HTML")
+
+    last_text = None
+    # Render Free Tier'da CPU/RAM cheklangani uchun live log CHEKSIZ emas —
+    # 30 soniya (har 3 soniyada bir yangilanish) bilan chegaralangan, keyin
+    # to'xtaydi. Foydalanuvchi qayta tugmani bossa, yana 30 soniyaga yoqiladi.
+    for _ in range(10):
+        await asyncio.sleep(3)
+        current_row = db.get_bot(bot_id)
+        if current_row is None:
+            break
+        logs = read_log_tail(current_row["code_path"], n_lines=25)
+        status_icon = "🟢" if is_running(bot_id) else "🔴"
+        text = f"📡 <b>{html.escape(label)}</b> {status_icon}\n\n<pre>{html.escape(logs[-2500:])}</pre>"
+        if text != last_text:
+            try:
+                await msg.edit_text(text, parse_mode="HTML")
+                last_text = text
+            except Exception:
+                pass  # matn o'zgarmagan bo'lsa Telegram xato qaytaradi, buni e'tiborsiz qoldiramiz
+
+    try:
+        final_text = (
+            last_text + "\n\n<i>⏸ Yangilanish to'xtatildi. Davom ettirish uchun \"📡 Live log\"ni qayta bosing.</i>"
+            if last_text else "Log topilmadi."
+        )
+        await msg.edit_text(final_text, parse_mode="HTML")
+    except Exception:
+        pass

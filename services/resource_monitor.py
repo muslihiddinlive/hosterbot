@@ -57,6 +57,16 @@ def platform_ram_mb() -> float:
         return 0.0
 
 
+def bot_ram_mb(bot_id: int) -> float:
+    """Berilgan bot_id uchun hozirgi haqiqiy RSS xotira sarfini (MB) qaytaradi.
+    Bot ishlamayotgan bo'lsa 0.0 qaytaradi."""
+    pids = list_running_pids()
+    pid = pids.get(bot_id)
+    if pid is None:
+        return 0.0
+    return _process_rss_mb(pid)
+
+
 def can_start_new_bot(safety_margin_mb: float = 60.0) -> tuple[bool, float, float]:
     """
     Yangi bot ishga tushirish/qayta ishga tushirishdan OLDIN chaqiriladi.

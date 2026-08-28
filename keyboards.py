@@ -132,6 +132,10 @@ def bot_manage_kb(bot_row) -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton(
             text=f"🔁 Yana 24 soatga uzaytirish ({db.get_stars_per_unit()}⭐️)", callback_data=f"stars_extend:{bot_row['bot_id']}",
         )])
+    rows.append([
+        InlineKeyboardButton(text="💾 Resurs", callback_data=f"bot_resource:{bot_row['bot_id']}"),
+        InlineKeyboardButton(text="📡 Live log", callback_data=f"bot_live_log:{bot_row['bot_id']}"),
+    ])
     rows.append([InlineKeyboardButton(text="ℹ️ Bot haqida (kod/log/env)", callback_data=f"bot_info:{bot_row['bot_id']}")])
     rows.append([InlineKeyboardButton(text="🗑 O'chirish", callback_data=f"bot_delete:{bot_row['bot_id']}")])
     rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="bot_list_back")])
@@ -203,6 +207,10 @@ def admin_bot_view_kb(bot_row) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👤 Egasi haqida", callback_data=f"admin_owner_info:{bot_row['bot_id']}")],
         [InlineKeyboardButton(text=toggle_text, callback_data=toggle_cb)],
+        [
+            InlineKeyboardButton(text="💾 Resurs", callback_data=f"bot_resource:{bot_row['bot_id']}"),
+            InlineKeyboardButton(text="📡 Live log", callback_data=f"bot_live_log:{bot_row['bot_id']}"),
+        ],
         [InlineKeyboardButton(text="ℹ️ Kod/log/env", callback_data=f"bot_info:{bot_row['bot_id']}")],
         [InlineKeyboardButton(text="🗑 O'chirish", callback_data=f"bot_delete:{bot_row['bot_id']}")],
         [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_all_bots")],
