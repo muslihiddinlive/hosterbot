@@ -13,7 +13,7 @@ import sqlite3
 import time
 from contextlib import contextmanager
 
-from config import DB_PATH, is_admin, STARS_PER_UNIT as DEFAULT_STARS_PER_UNIT, SECONDS_PER_UNIT as DEFAULT_SECONDS_PER_UNIT
+from config import DB_PATH, is_admin, STARS_PER_UNIT as DEFAULT_STARS_PER_UNIT, SECONDS_PER_UNIT as DEFAULT_SECONDS_PER_UNIT, MIN_WITHDRAW_STARS as DEFAULT_MIN_WITHDRAW_STARS
 from services.crypto_utils import encrypt_value, decrypt_value
 
 SCHEMA = """
@@ -194,6 +194,10 @@ def get_stars_per_unit() -> int:
 
 def get_seconds_per_unit() -> int:
     return int(get_setting("seconds_per_unit", DEFAULT_SECONDS_PER_UNIT))
+
+
+def get_min_withdraw_stars() -> int:
+    return int(get_setting("min_withdraw_stars", DEFAULT_MIN_WITHDRAW_STARS))
 
 
 def is_user_approved(telegram_id: int) -> bool:

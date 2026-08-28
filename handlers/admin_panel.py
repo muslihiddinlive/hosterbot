@@ -8,7 +8,8 @@ from aiogram.fsm.context import FSMContext
 import database as db
 from config import is_admin, is_superadmin, STORAGE_GROUP_ID
 from states import AdminMessageUser, AdminSetLimit, AdminStarsSetting
-from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb
+from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb, admin_gift_list_kb
+from aiogram.exceptions import TelegramBadRequest
 from services.backup import backup_database
 
 router = Router()
@@ -54,10 +55,12 @@ async def cb_admin_stars_settings(callback: CallbackQuery):
         return
     amount = db.get_stars_per_unit()
     hours = db.get_seconds_per_unit() // 3600
+    min_withdraw = db.get_min_withdraw_stars()
     await callback.message.edit_text(
         f"⭐️ <b>Stars narxi sozlamalari</b>\n\n"
         f"Hozirgi narx: <b>{amount} stars = {hours} soat</b> hosting.\n"
-        f"Bu qiymat darhol o'zgaradi, redeploy shart emas.",
+        f"Min. gift-yechish miqdori: <b>{min_withdraw} ⭐️</b>\n"
+        f"Bu qiymatlar darhol o'zgaradi, redeploy shart emas.",
         parse_mode="HTML",
         reply_markup=admin_stars_settings_kb(),
     )
@@ -104,6 +107,27 @@ async def set_stars_hours(message: Message, state: FSMContext):
         return
     db.set_setting("seconds_per_unit", int(text) * 3600)
     await message.answer(f"✅ Endi {db.get_stars_per_unit()} stars = {text} soat hosting.")
+
+
+@router.callback_query(F.data == "admin_set_min_withdraw")
+async def cb_admin_set_min_withdraw(callback: CallbackQuery, state: FSMContext):
+    if not is_superadmin(callback.from_user.id):
+        await callback.answer("Bu faqat superadminlar uchun.", show_alert=True)
+        return
+    await state.set_state(AdminStarsSetting.waiting_min_withdraw)
+    await callback.message.answer(f"Gift orqali yechish uchun minimal balans qancha bo'lsin? Raqam yozing (hozir: {db.get_min_withdraw_stars()}).")
+    await callback.answer()
+
+
+@router.message(AdminStarsSetting.waiting_min_withdraw)
+async def set_min_withdraw(message: Message, state: FSMContext):
+    await state.clear()
+    text = (message.text or "").strip()
+    if not text.isdigit() or int(text) <= 0:
+        await message.answer("Musbat butun son yuboring.")
+        return
+    db.set_setting("min_withdraw_stars", int(text))
+    await message.answer(f"✅ Endi minimal yechish miqdori: {text} ⭐️")
 
 
 @router.callback_query(F.data == "admin_users")
@@ -161,7 +185,88 @@ async def cb_admin_user_view(callback: CallbackQuery):
     )
     await callback.message.edit_text(
         text, parse_mode="HTML",
-        reply_markup=admin_user_view_kb(telegram_id, bots, current_max_bots=user["max_bots"]),
+        reply_markup=admin_user_view_kb(
+            telegram_id, bots, current_max_bots=user["max_bots"],
+            balance=user["balance_stars"], min_withdraw=db.get_min_withdraw_stars(),
+        ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_gift_withdraw:"))
+async def cb_admin_gift_withdraw(callback: CallbackQuery, bot: Bot):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+    target_id = int(callback.data.split(":")[1])
+    user = db.get_user(target_id)
+    if user is None:
+        await callback.answer("Foydalanuvchi topilmadi.", show_alert=True)
+        return
+
+    try:
+        gifts_result = await bot.get_available_gifts()
+    except Exception as e:
+        await callback.answer(f"Gift ro'yxatini olishda xato: {e}", show_alert=True)
+        return
+
+    affordable = [g for g in gifts_result.gifts if g.star_count <= user["balance_stars"]]
+    if not affordable:
+        await callback.answer(
+            f"Balansga ({user['balance_stars']} ⭐️) mos keladigan gift topilmadi — "
+            f"eng arzoni ham qimmatroq.",
+            show_alert=True,
+        )
+        return
+
+    affordable.sort(key=lambda g: g.star_count)
+    await callback.message.edit_text(
+        f"🎁 <b>Gift tanlang</b> (foydalanuvchi balansi: {user['balance_stars']} ⭐️):\n\n"
+        f"<i>Diqqat: gift bot'ning HAQIQIY Stars balansidan yuboriladi (foydalanuvchi to'lovlaridan "
+        f"to'plangan real balans). Bot balansi yetmasa, yuborish muvaffaqiyatsiz bo'ladi.</i>",
+        parse_mode="HTML",
+        reply_markup=admin_gift_list_kb(target_id, affordable),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_gift_send:"))
+async def cb_admin_gift_send(callback: CallbackQuery, bot: Bot):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+    _, target_id_s, gift_id, price_s = callback.data.split(":")
+    target_id = int(target_id_s)
+    price = int(price_s)
+
+    user = db.get_user(target_id)
+    if user is None or user["balance_stars"] < price:
+        await callback.answer("Balans o'zgargan (kamayib ketgan) — qaytadan urinib ko'ring.", show_alert=True)
+        return
+
+    try:
+        await bot.send_gift(user_id=target_id, gift_id=gift_id)
+    except TelegramBadRequest as e:
+        await callback.answer(f"Gift yuborilmadi: {e}", show_alert=True)
+        return
+    except Exception as e:
+        await callback.answer(f"Kutilmagan xato: {e}", show_alert=True)
+        return
+
+    db.add_user_balance(target_id, -price)
+    new_balance = db.get_user_balance(target_id)
+
+    try:
+        await bot.send_message(target_id, f"🎁 Sizga admin tomonidan gift yuborildi! Balansingizdan {price} ⭐️ yechildi.")
+    except Exception:
+        pass
+
+    await callback.message.edit_text(
+        f"✅ Gift yuborildi ({price} ⭐️). Foydalanuvchining yangi balansi: {new_balance} ⭐️",
+        reply_markup=admin_user_view_kb(
+            target_id, db.list_user_bots(target_id), current_max_bots=user["max_bots"],
+            balance=new_balance, min_withdraw=db.get_min_withdraw_stars(),
+        ),
     )
     await callback.answer()
 

@@ -28,6 +28,7 @@ MAX_BOTS_PER_USER = int(os.environ.get("MAX_BOTS_PER_USER", "3"))
 # hosting huquqi beradi. Admin tasdiqisiz, foydalanuvchi o'zi to'lab bot host qila oladi.
 STARS_PER_UNIT = int(os.environ.get("STARS_PER_UNIT", "3"))
 SECONDS_PER_UNIT = int(os.environ.get("SECONDS_PER_UNIT", str(24 * 3600)))
+MIN_WITHDRAW_STARS = int(os.environ.get("MIN_WITHDRAW_STARS", "15"))
 
 # ---- Webhook (Render Free Tier Web Service uchun) ----
 # Render web service'lar avtomatik RENDER_EXTERNAL_URL beradi (masalan https://hosterbot.onrender.com).

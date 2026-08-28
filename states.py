@@ -36,3 +36,4 @@ class AdminSetLimit(StatesGroup):
 class AdminStarsSetting(StatesGroup):
     waiting_amount = State()
     waiting_hours = State()
+    waiting_min_withdraw = State()

@@ -93,6 +93,7 @@ def admin_stars_settings_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✏️ Stars miqdorini o'zgartirish", callback_data="admin_set_stars_amount")],
         [InlineKeyboardButton(text="✏️ Muddatni o'zgartirish (soat)", callback_data="admin_set_stars_hours")],
+        [InlineKeyboardButton(text="✏️ Min. yechish miqdori", callback_data="admin_set_min_withdraw")],
         [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_panel_back")],
     ])
 
@@ -159,7 +160,7 @@ def admin_users_kb(users) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def admin_user_view_kb(telegram_id: int, bots, current_max_bots=None) -> InlineKeyboardMarkup:
+def admin_user_view_kb(telegram_id: int, bots, current_max_bots=None, balance=0, min_withdraw=15) -> InlineKeyboardMarkup:
     rows = []
     for b in bots:
         label = b["bot_username"] or b["display_name"] or f"Bot #{b['bot_id']}"
@@ -167,8 +168,22 @@ def admin_user_view_kb(telegram_id: int, bots, current_max_bots=None) -> InlineK
         rows.append([InlineKeyboardButton(text=f"{status_icon} {label}", callback_data=f"admin_bot_view:{b['bot_id']}")])
     limit_label = f"✏️ Bot limiti ({current_max_bots if current_max_bots is not None else 'default'})"
     rows.append([InlineKeyboardButton(text=limit_label, callback_data=f"admin_set_limit:{telegram_id}")])
+    if balance >= min_withdraw:
+        rows.append([InlineKeyboardButton(text="🎁 Balansni gift orqali yechish", callback_data=f"admin_gift_withdraw:{telegram_id}")])
     rows.append([InlineKeyboardButton(text="✉️ Habar yozish", callback_data=f"admin_msg_user:{telegram_id}")])
     rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_users")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_gift_list_kb(telegram_id: int, gifts) -> InlineKeyboardMarkup:
+    rows = []
+    for g in gifts:
+        emoji = g.sticker.emoji if getattr(g, "sticker", None) and getattr(g.sticker, "emoji", None) else "🎁"
+        rows.append([InlineKeyboardButton(
+            text=f"{emoji} {g.star_count} ⭐️",
+            callback_data=f"admin_gift_send:{telegram_id}:{g.id}:{g.star_count}",
+        )])
+    rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data=f"admin_user_view:{telegram_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
