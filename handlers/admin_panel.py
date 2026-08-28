@@ -1,4 +1,5 @@
 import html
+import time
 from datetime import datetime
 
 from aiogram import Router, F, Bot
@@ -6,7 +7,7 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 
 import database as db
-from config import is_admin, is_superadmin, STORAGE_GROUP_ID
+from config import is_admin, is_superadmin, STORAGE_GROUP_ID, ADMIN_IDS, SUPERADMIN_IDS
 from states import AdminMessageUser, AdminSetLimit, AdminStarsSetting
 from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb, admin_gift_list_kb, admin_ban_choice_kb
 from services.deploy_manager import stop_bot_process
@@ -202,11 +203,26 @@ async def cb_admin_ban_ask(callback: CallbackQuery):
         await callback.answer("Ruxsat yo'q.", show_alert=True)
         return
     target_id = int(callback.data.split(":")[1])
+    user = db.get_user(target_id)
+    paid_before = bool(user and user["lifetime_topup_stars"] > 0)
+    min_stars = db.get_unblock_min_stars()
+    fee_pct = db.get_unblock_fee_percent()
+
+    if paid_before:
+        note = (
+            f"Bu foydalanuvchi avval to'lov qilgan — shu sabab avtomatik <b>24 soatdan keyin</b> "
+            f"ochiladi, va botga xabar boradi. Yoki {min_stars}+ ⭐️ to'lasa (bunda {100 - fee_pct}%'i "
+            f"balansiga tushadi, {fee_pct}%'i xizmat haqi sifatida olinadi) — darhol ochiladi."
+        )
+    else:
+        note = "Bu foydalanuvchi hali to'lov qilmagan — siz qo'lda ochmaguningizcha bloklangan qoladi."
+
     await callback.message.edit_text(
-        "🚫 Ruxsatni majburan olib tashlaysizmi?\n\n"
-        "Bu foydalanuvchining barcha ishlab turgan botlari darhol to'xtatiladi, "
-        "yangi bot host qilish (admin tasdig'i yoki Stars orqali ham) bloklanadi.\n\n"
-        "Foydalanuvchiga xabar berilsinmi?",
+        f"🚫 <b>Host qilish huquqini vaqtincha olib tashlaysizmi?</b>\n\n"
+        f"Bu foydalanuvchining barcha ishlab turgan botlari darhol to'xtatiladi, yangi bot host "
+        f"qilish (admin tasdig'i yoki Stars orqali ham) bloklanadi — xuddi yangi (tasdiqlanmagan) "
+        f"foydalanuvchi kabi bo'lib qoladi.\n\n{note}",
+        parse_mode="HTML",
         reply_markup=admin_ban_choice_kb(target_id),
     )
     await callback.answer()
@@ -217,8 +233,8 @@ async def cb_admin_ban_do(callback: CallbackQuery, bot: Bot):
     if not is_admin(callback.from_user.id):
         await callback.answer("Ruxsat yo'q.", show_alert=True)
         return
-    _, target_id_s, mode = callback.data.split(":")
-    target_id = int(target_id_s)
+    target_id = int(callback.data.split(":")[1])
+    user = db.get_user(target_id)
 
     db.set_user_banned(target_id, True)
 
@@ -229,21 +245,42 @@ async def cb_admin_ban_do(callback: CallbackQuery, bot: Bot):
             db.set_bot_status(b["bot_id"], "stopped", None)
             stopped.append(b["bot_username"] or b["display_name"] or f"Bot #{b['bot_id']}")
 
-    if mode == "notify":
+    paid_before = bool(user and user["lifetime_topup_stars"] > 0)
+    if paid_before:
+        unblock_at = int(time.time()) + 24 * 3600
+        db.set_user_blocked_until(target_id, unblock_at)
         try:
             await bot.send_message(
                 target_id,
-                "⛔️ Sizning ruxsatingiz administratsiya tomonidan olib tashlandi. "
-                "Barcha botlaringiz to'xtatildi va yangi bot host qila olmaysiz.",
+                "⏸ Superadmin sizni vaqtincha bloklagan — botlaringiz to'xtatildi va hozircha "
+                "yangi bot host qila olmaysiz.\n\n"
+                f"Avval to'lov qilganingiz uchun 24 soatdan keyin avtomatik ochiladi. Yoki "
+                f"{db.get_unblock_min_stars()}+ ⭐️ to'lab darhol ochishingiz mumkin "
+                f"({100 - db.get_unblock_fee_percent()}%'i balansingizga tushadi).",
+            )
+        except Exception:
+            pass
+    else:
+        db.set_user_blocked_until(target_id, None)
+
+    # Barcha adminlarga xabar (audit)
+    for admin_id in set(ADMIN_IDS) | set(SUPERADMIN_IDS):
+        if admin_id == callback.from_user.id:
+            continue
+        try:
+            await bot.send_message(
+                admin_id,
+                f"ℹ️ {callback.from_user.first_name} foydalanuvchi <code>{target_id}</code>ning host "
+                f"qilish huquqini vaqtincha olib tashladi.",
+                parse_mode="HTML",
             )
         except Exception:
             pass
 
     await backup_database(bot)
     stopped_text = f"\nTo'xtatilgan botlar: {', '.join(stopped)}" if stopped else ""
-    await callback.message.edit_text(
-        f"✅ Ruxsat olib tashlandi ({'xabar bilan' if mode == 'notify' else 'sezdirmasdan'}).{stopped_text}",
-    )
+    timer_text = " (24 soatdan keyin avtomatik ochiladi)" if paid_before else " (qo'lda ochish kerak bo'ladi)"
+    await callback.message.edit_text(f"✅ Host qilish huquqi olib tashlandi{timer_text}.{stopped_text}")
     await callback.answer()
 
 
@@ -254,6 +291,7 @@ async def cb_admin_unban(callback: CallbackQuery, bot: Bot):
         return
     target_id = int(callback.data.split(":")[1])
     db.set_user_banned(target_id, False)
+    db.set_user_blocked_until(target_id, None)
     await backup_database(bot)
     await callback.answer("✅ Ruxsat qaytarildi.", show_alert=True)
     # Ro'yxatni yangilab ko'rsatamiz

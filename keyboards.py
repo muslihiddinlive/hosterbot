@@ -175,9 +175,9 @@ def admin_user_view_kb(telegram_id: int, bots, current_max_bots=None, balance=0,
     if balance >= min_withdraw:
         rows.append([InlineKeyboardButton(text="🎁 Balansni gift orqali yechish", callback_data=f"admin_gift_withdraw:{telegram_id}")])
     if is_banned:
-        rows.append([InlineKeyboardButton(text="✅ Ruxsatni qaytarish", callback_data=f"admin_unban:{telegram_id}")])
+        rows.append([InlineKeyboardButton(text="✅ Host huquqini qaytarish", callback_data=f"admin_unban:{telegram_id}")])
     else:
-        rows.append([InlineKeyboardButton(text="🚫 Ruxsatni majburan olib tashlash", callback_data=f"admin_ban_ask:{telegram_id}")])
+        rows.append([InlineKeyboardButton(text="🚫 Host huquqini vaqtincha olib qo'yish", callback_data=f"admin_ban_ask:{telegram_id}")])
     rows.append([InlineKeyboardButton(text="✉️ Habar yozish", callback_data=f"admin_msg_user:{telegram_id}")])
     rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_users")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -185,8 +185,7 @@ def admin_user_view_kb(telegram_id: int, bots, current_max_bots=None, balance=0,
 
 def admin_ban_choice_kb(telegram_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔔 Xabar bilan (user biladi)", callback_data=f"admin_ban_do:{telegram_id}:notify")],
-        [InlineKeyboardButton(text="🤫 Sezdirmasdan", callback_data=f"admin_ban_do:{telegram_id}:silent")],
+        [InlineKeyboardButton(text="✅ Ha, olib tashlash", callback_data=f"admin_ban_do:{telegram_id}")],
         [InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data=f"admin_user_view:{telegram_id}")],
     ])
 

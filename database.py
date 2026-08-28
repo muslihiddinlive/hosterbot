@@ -26,7 +26,9 @@ CREATE TABLE IF NOT EXISTS users (
     approved_at     INTEGER,
     balance_stars   INTEGER NOT NULL DEFAULT 0,  -- Telegram Stars prepaid balans
     max_bots        INTEGER,  -- admin belgilagan individual limit (NULL = global MAX_BOTS_PER_USER ishlatiladi)
-    is_banned       INTEGER NOT NULL DEFAULT 0  -- 1 = majburan ruxsatlari olib tashlangan (status'dan mustaqil)
+    is_banned       INTEGER NOT NULL DEFAULT 0,  -- 1 = host qilish huquqi vaqtincha olib tashlangan
+    blocked_until   INTEGER,  -- to'lov qilgan (lifetime_topup_stars>0) userlar uchun avtomatik ochilish vaqti (epoch)
+    lifetime_topup_stars INTEGER NOT NULL DEFAULT 0  -- umr bo'yi to'langan jami stars (balans sarflansa ham kamaymaydi — "haqiqiy to'lovchi"ligini bilish uchun)
 );
 
 CREATE TABLE IF NOT EXISTS pending_requests (
@@ -112,6 +114,14 @@ def init_db():
             conn.execute("ALTER TABLE users ADD COLUMN is_banned INTEGER NOT NULL DEFAULT 0")
         except sqlite3.OperationalError:
             pass
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN blocked_until INTEGER")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN lifetime_topup_stars INTEGER NOT NULL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
 
 
 # ---------- users ----------
@@ -184,6 +194,39 @@ def is_banned(telegram_id: int) -> bool:
 def set_user_banned(telegram_id: int, banned: bool):
     with get_conn() as conn:
         conn.execute("UPDATE users SET is_banned=? WHERE telegram_id=?", (1 if banned else 0, telegram_id))
+
+
+def set_user_blocked_until(telegram_id: int, ts):
+    with get_conn() as conn:
+        conn.execute("UPDATE users SET blocked_until=? WHERE telegram_id=?", (ts, telegram_id))
+
+
+def add_lifetime_topup(telegram_id: int, amount: int):
+    """Balans qancha sarflansa ham kamaymaydigan, 'umr bo'yi qancha to'lagan'
+    hisoblagichi — foydalanuvchi haqiqiy to'lovchi ekanini bilish uchun."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET lifetime_topup_stars = lifetime_topup_stars + ? WHERE telegram_id=?",
+            (amount, telegram_id),
+        )
+
+
+def list_users_pending_auto_unblock():
+    """blocked_until vaqti o'tib ketgan, hali ham bloklangan foydalanuvchilar."""
+    now = int(time.time())
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM users WHERE is_banned=1 AND blocked_until IS NOT NULL AND blocked_until <= ?",
+            (now,),
+        ).fetchall()
+
+
+def get_unblock_min_stars() -> int:
+    return int(get_setting("unblock_min_stars", 100))
+
+
+def get_unblock_fee_percent() -> int:
+    return int(get_setting("unblock_fee_percent", 10))
 
 
 def get_setting(key: str, default=None):

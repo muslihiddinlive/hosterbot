@@ -187,12 +187,39 @@ async def billing_watchdog():
             log.warning(f"Billing watchdog xatoligi: {e}")
 
 
+async def auto_unblock_watchdog():
+    """
+    Superadmin tomonidan host qilish huquqi vaqtincha olib tashilgan (is_banned=1),
+    lekin AVVAL to'lov qilgan (lifetime_topup_stars>0) foydalanuvchilar uchun
+    24 soatdan keyin avtomatik ochadi. To'lov qilmagan foydalanuvchilar uchun
+    blocked_until=None qo'yilgani sababli bu funksiya ularga tegmaydi.
+    """
+    while True:
+        await asyncio.sleep(BILLING_WATCHDOG_INTERVAL_SEC)
+        try:
+            for user_row in db.list_users_pending_auto_unblock():
+                telegram_id = user_row["telegram_id"]
+                db.set_user_banned(telegram_id, False)
+                db.set_user_blocked_until(telegram_id, None)
+                try:
+                    await bot.send_message(
+                        telegram_id,
+                        "🔓 24 soat o'tdi — host qilish huquqingiz avtomatik tiklandi.",
+                    )
+                except Exception:
+                    pass
+                await backup_database(bot)
+        except Exception as e:
+            log.warning(f"Auto-unblock watchdog xatoligi: {e}")
+
+
 async def on_startup(app: web.Application):
     await restore_database(bot)
     db.init_db()
     await restore_running_bots(bot)
     asyncio.create_task(crash_watchdog())
     asyncio.create_task(billing_watchdog())
+    asyncio.create_task(auto_unblock_watchdog())
 
     if not WEBHOOK_BASE_URL:
         log.warning(

@@ -116,9 +116,44 @@ async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery):
 async def process_successful_payment(message: Message):
     payment = message.successful_payment
     amount = payment.total_amount  # XTR uchun bu to'g'ridan-to'g'ri stars soni
+    user_id = message.from_user.id
 
-    db.add_user_balance(message.from_user.id, amount)
-    new_balance = db.get_user_balance(message.from_user.id)
+    db.add_lifetime_topup(user_id, amount)  # umr bo'yi to'lov hisoblagichi — hech qachon kamaymaydi
+    user = db.get_user(user_id)
+
+    # Agar user hozir bloklangan bo'lsa va yetarli miqdorda to'lasa — darhol ochamiz,
+    # lekin xizmat haqi sifatida bir qismini ushlab qolamiz (qolgani balansga tushadi).
+    min_stars = db.get_unblock_min_stars()
+    fee_pct = db.get_unblock_fee_percent()
+    if user and user["is_banned"] and amount >= min_stars:
+        fee = (amount * fee_pct) // 100
+        credited = amount - fee
+        db.add_user_balance(user_id, credited)
+        db.set_user_banned(user_id, False)
+        db.set_user_blocked_until(user_id, None)
+        new_balance = db.get_user_balance(user_id)
+        await message.answer(
+            f"✅ To'lov qabul qilindi — <b>{amount} ⭐️</b>.\n"
+            f"Xizmat haqi: {fee} ⭐️ ({fee_pct}%), balansga qo'shildi: {credited} ⭐️.\n"
+            f"Yangi balans: <b>{new_balance} ⭐️</b>\n\n"
+            f"🔓 Host qilish huquqingiz <b>darhol tiklandi</b>.",
+            parse_mode="HTML",
+            reply_markup=main_menu_kb(is_admin=is_admin(user_id)),
+        )
+        return
+
+    db.add_user_balance(user_id, amount)
+    new_balance = db.get_user_balance(user_id)
+
+    if user and user["is_banned"]:
+        # Bloklangan, lekin yetarli emas — balans qo'shildi, lekin hali bloklangan holda qoladi.
+        await message.answer(
+            f"To'lov qabul qilindi, balansga <b>{amount} ⭐️</b> qo'shildi (yangi balans: {new_balance} ⭐️).\n\n"
+            f"⏸ Lekin host qilish huquqingiz hali bloklangan. Darhol ochish uchun bir martada "
+            f"kamida <b>{min_stars} ⭐️</b> to'lashingiz kerak, aks holda avvalgi shartlaringiz bo'yicha kuting.",
+            parse_mode="HTML",
+        )
+        return
 
     await message.answer(
         f"✅ To'lov qabul qilindi! Balansga <b>{amount} ⭐️</b> qo'shildi.\n"
