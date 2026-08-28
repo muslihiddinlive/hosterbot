@@ -8,7 +8,8 @@ from aiogram.fsm.context import FSMContext
 import database as db
 from config import is_admin, is_superadmin, STORAGE_GROUP_ID
 from states import AdminMessageUser, AdminSetLimit, AdminStarsSetting
-from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb, admin_gift_list_kb
+from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb, admin_gift_list_kb, admin_ban_choice_kb
+from services.deploy_manager import stop_bot_process
 from aiogram.exceptions import TelegramBadRequest
 from services.backup import backup_database
 
@@ -178,7 +179,8 @@ async def cb_admin_user_view(callback: CallbackQuery):
         f"👤 <b>{html.escape(user['first_name'] or 'Nomsiz')}</b>"
         f"{' (@' + user['username'] + ')' if user['username'] else ''}\n"
         f"🆔 ID: <code>{user['telegram_id']}</code>\n"
-        f"Holati: {status_label.get(user['status'], user['status'])}\n"
+        f"Holati: {status_label.get(user['status'], user['status'])}"
+        f"{' — 🚫 RUXSATI OLIB TASHLANGAN' if user['is_banned'] else ''}\n"
         f"/start bosgan sana: {start_date}\n"
         f"⭐️ Balans: <b>{user['balance_stars']}</b> stars\n\n"
         f"<b>Botlari ({len(bots)}):</b>\n{bots_text}"
@@ -188,9 +190,82 @@ async def cb_admin_user_view(callback: CallbackQuery):
         reply_markup=admin_user_view_kb(
             telegram_id, bots, current_max_bots=user["max_bots"],
             balance=user["balance_stars"], min_withdraw=db.get_min_withdraw_stars(),
+            is_banned=bool(user["is_banned"]),
         ),
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_ban_ask:"))
+async def cb_admin_ban_ask(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+    target_id = int(callback.data.split(":")[1])
+    await callback.message.edit_text(
+        "🚫 Ruxsatni majburan olib tashlaysizmi?\n\n"
+        "Bu foydalanuvchining barcha ishlab turgan botlari darhol to'xtatiladi, "
+        "yangi bot host qilish (admin tasdig'i yoki Stars orqali ham) bloklanadi.\n\n"
+        "Foydalanuvchiga xabar berilsinmi?",
+        reply_markup=admin_ban_choice_kb(target_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_ban_do:"))
+async def cb_admin_ban_do(callback: CallbackQuery, bot: Bot):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+    _, target_id_s, mode = callback.data.split(":")
+    target_id = int(target_id_s)
+
+    db.set_user_banned(target_id, True)
+
+    stopped = []
+    for b in db.list_user_bots(target_id):
+        if b["status"] == "running":
+            stop_bot_process(b["bot_id"])
+            db.set_bot_status(b["bot_id"], "stopped", None)
+            stopped.append(b["bot_username"] or b["display_name"] or f"Bot #{b['bot_id']}")
+
+    if mode == "notify":
+        try:
+            await bot.send_message(
+                target_id,
+                "⛔️ Sizning ruxsatingiz administratsiya tomonidan olib tashlandi. "
+                "Barcha botlaringiz to'xtatildi va yangi bot host qila olmaysiz.",
+            )
+        except Exception:
+            pass
+
+    await backup_database(bot)
+    stopped_text = f"\nTo'xtatilgan botlar: {', '.join(stopped)}" if stopped else ""
+    await callback.message.edit_text(
+        f"✅ Ruxsat olib tashlandi ({'xabar bilan' if mode == 'notify' else 'sezdirmasdan'}).{stopped_text}",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_unban:"))
+async def cb_admin_unban(callback: CallbackQuery, bot: Bot):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+    target_id = int(callback.data.split(":")[1])
+    db.set_user_banned(target_id, False)
+    await backup_database(bot)
+    await callback.answer("✅ Ruxsat qaytarildi.", show_alert=True)
+    # Ro'yxatni yangilab ko'rsatamiz
+    user = db.get_user(target_id)
+    bots = db.list_user_bots(target_id)
+    await callback.message.edit_reply_markup(
+        reply_markup=admin_user_view_kb(
+            target_id, bots, current_max_bots=user["max_bots"],
+            balance=user["balance_stars"], min_withdraw=db.get_min_withdraw_stars(),
+            is_banned=False,
+        ),
+    )
 
 
 @router.callback_query(F.data.startswith("admin_gift_withdraw:"))

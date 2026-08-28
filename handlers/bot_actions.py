@@ -38,6 +38,10 @@ async def cb_bot_start(callback: CallbackQuery, bot: Bot):
         await callback.answer("Ruxsat yo'q.", show_alert=True)
         return
 
+    if db.is_banned(bot_row["owner_id"]) and not is_admin(callback.from_user.id):
+        await callback.answer("⛔️ Egasining ruxsati olib tashlangan — bot ishga tushirilmaydi.", show_alert=True)
+        return
+
     allowed, used_mb, budget_mb = can_start_new_bot()
     if not allowed:
         await callback.answer(

@@ -17,6 +17,10 @@ class ReplyToUser(StatesGroup):
     waiting_text = State()
 
 
+class ApproveGrantLimit(StatesGroup):
+    waiting_number = State()
+
+
 # callback_data formatlari: req_deny:<id> | req_approve:<id> | req_reply:<id>
 
 @router.callback_query(F.data.startswith("req_"))
@@ -33,21 +37,52 @@ async def on_request_action(callback: CallbackQuery, state: FSMContext):
         return
 
     if action == "req_approve":
-        db.set_user_status(request["telegram_id"], "approved")
+        await state.update_data(approve_request_id=request_id)
+        await state.set_state(ApproveGrantLimit.waiting_number)
+        await callback.message.answer(
+            "Bu foydalanuvchiga nechta bot host qilishga ruxsat berasiz? Raqam yozing.\n"
+            "(Standart limit endi avtomatik berilmaydi — har safar aniq belgilashingiz kerak.)"
+        )
+        await callback.answer()
+        return
     elif action == "req_deny":
         db.set_user_status(request["telegram_id"], "denied")
-    # req_reply -> statusni o'zgartirmaymiz, faqat javob yozamiz
 
     await state.update_data(reply_request_id=request_id, reply_action=action)
     await state.set_state(ReplyToUser.waiting_text)
 
     action_label = {
-        "req_approve": "✅ Ruxsat berildi. Endi",
         "req_deny": "❌ Bekor qilindi. Endi",
         "req_reply": "Endi",
     }[action]
     await callback.message.answer(f"{action_label} foydalanuvchiga yubormoqchi bo'lgan javobingizni yozing:")
     await callback.answer()
+
+
+@router.message(ApproveGrantLimit.waiting_number)
+async def approve_grant_limit_entered(message: Message, state: FSMContext):
+    data = await state.get_data()
+    request_id = data.get("approve_request_id")
+    request = db.get_request(request_id)
+    if request is None:
+        await state.clear()
+        await message.answer("Xatolik: so'rov topilmadi.")
+        return
+
+    text = (message.text or "").strip()
+    if not text.isdigit() or int(text) <= 0:
+        await message.answer("Iltimos, musbat butun son yuboring (masalan: 3).")
+        return
+
+    limit = int(text)
+    db.set_user_status(request["telegram_id"], "approved")
+    db.set_user_max_bots(request["telegram_id"], limit)
+
+    await state.update_data(reply_request_id=request_id, reply_action="req_approve")
+    await state.set_state(ReplyToUser.waiting_text)
+    await message.answer(
+        f"✅ Ruxsat berildi — {limit} ta bot limiti bilan. Endi foydalanuvchiga yubormoqchi bo'lgan javobingizni yozing:"
+    )
 
 
 @router.message(ReplyToUser.waiting_text)

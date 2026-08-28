@@ -158,13 +158,13 @@ def admin_users_kb(users) -> InlineKeyboardMarkup:
     rows = []
     for u in users:
         label = f"@{u['username']}" if u["username"] else (u["first_name"] or str(u["telegram_id"]))
-        icon = status_icon.get(u["status"], "❓")
+        icon = "🚫" if u["is_banned"] else status_icon.get(u["status"], "❓")
         rows.append([InlineKeyboardButton(text=f"{icon} {label}", callback_data=f"admin_user_view:{u['telegram_id']}")])
     rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_panel_back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def admin_user_view_kb(telegram_id: int, bots, current_max_bots=None, balance=0, min_withdraw=15) -> InlineKeyboardMarkup:
+def admin_user_view_kb(telegram_id: int, bots, current_max_bots=None, balance=0, min_withdraw=15, is_banned=False) -> InlineKeyboardMarkup:
     rows = []
     for b in bots:
         label = b["bot_username"] or b["display_name"] or f"Bot #{b['bot_id']}"
@@ -174,9 +174,21 @@ def admin_user_view_kb(telegram_id: int, bots, current_max_bots=None, balance=0,
     rows.append([InlineKeyboardButton(text=limit_label, callback_data=f"admin_set_limit:{telegram_id}")])
     if balance >= min_withdraw:
         rows.append([InlineKeyboardButton(text="🎁 Balansni gift orqali yechish", callback_data=f"admin_gift_withdraw:{telegram_id}")])
+    if is_banned:
+        rows.append([InlineKeyboardButton(text="✅ Ruxsatni qaytarish", callback_data=f"admin_unban:{telegram_id}")])
+    else:
+        rows.append([InlineKeyboardButton(text="🚫 Ruxsatni majburan olib tashlash", callback_data=f"admin_ban_ask:{telegram_id}")])
     rows.append([InlineKeyboardButton(text="✉️ Habar yozish", callback_data=f"admin_msg_user:{telegram_id}")])
     rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_users")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_ban_choice_kb(telegram_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔔 Xabar bilan (user biladi)", callback_data=f"admin_ban_do:{telegram_id}:notify")],
+        [InlineKeyboardButton(text="🤫 Sezdirmasdan", callback_data=f"admin_ban_do:{telegram_id}:silent")],
+        [InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data=f"admin_user_view:{telegram_id}")],
+    ])
 
 
 def admin_gift_list_kb(telegram_id: int, gifts) -> InlineKeyboardMarkup:

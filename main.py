@@ -56,6 +56,9 @@ async def restore_running_bots(bot: Bot):
     for bot_row in db.list_all_bots():
         if bot_row["status"] != "running":
             continue
+        if db.is_banned(bot_row["owner_id"]):
+            db.set_bot_status(bot_row["bot_id"], "stopped", None)
+            continue
 
         bot_id = bot_row["bot_id"]
         label = bot_row["bot_username"] or bot_row["display_name"] or f"Bot #{bot_id}"

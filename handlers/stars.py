@@ -138,6 +138,10 @@ async def cb_stars_extend(callback: CallbackQuery, bot: Bot):
         await callback.answer("Ruxsat yo'q.", show_alert=True)
         return
 
+    if db.is_banned(bot_row["owner_id"]):
+        await callback.answer("⛔️ Ruxsatingiz olib tashlangan — uzaytirib bo'lmaydi.", show_alert=True)
+        return
+
     stars_per_unit = db.get_stars_per_unit()
     seconds_per_unit = db.get_seconds_per_unit()
     balance = db.get_user_balance(bot_row["owner_id"])

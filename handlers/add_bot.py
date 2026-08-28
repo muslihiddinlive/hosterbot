@@ -33,6 +33,10 @@ ONLY_PYTHON_TEXT = (
 
 @router.message(F.text == "➕ Bot qo'shish")
 async def add_bot_start(message: Message, state: FSMContext):
+    if db.is_banned(message.from_user.id):
+        await message.answer("⛔️ Sizning ruxsatingiz olib tashlangan. Bot host qila olmaysiz.")
+        return
+
     if not is_admin(message.from_user.id):
         approved = db.is_user_approved(message.from_user.id)
         balance = db.get_user_balance(message.from_user.id)
@@ -439,7 +443,13 @@ async def finalize_deploy(message: Message, state: FSMContext, bot: Bot):
     # Admin tasdiqisiz (self-service) deploy qilayotgan bo'lsa — Stars balansidan
     # yechamiz va shu botga 24 soatlik (yoki sozlangan) hosting huquqi beramiz.
     # Balansni QAYTA tekshiramiz (race condition himoyasi: masalan build paytida
-    # boshqa oynada balansni sarflab qo'ygan bo'lishi mumkin).
+    # boshqa oynada balansni sarflab qo'ygan yoki ban qilingan bo'lishi mumkin).
+    if db.is_banned(owner_id):
+        db.set_bot_status(bot_id, "stopped")
+        await backup_database(bot)
+        await message.answer("⛔️ Ruxsatingiz olib tashlangan, deploy bekor qilindi.")
+        return
+
     stars_flow = not db.is_user_approved(owner_id)
     seconds_per_unit = db.get_seconds_per_unit()
     if stars_flow:

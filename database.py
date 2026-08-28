@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS users (
     created_at      INTEGER NOT NULL,
     approved_at     INTEGER,
     balance_stars   INTEGER NOT NULL DEFAULT 0,  -- Telegram Stars prepaid balans
-    max_bots        INTEGER  -- admin belgilagan individual limit (NULL = global MAX_BOTS_PER_USER ishlatiladi)
+    max_bots        INTEGER,  -- admin belgilagan individual limit (NULL = global MAX_BOTS_PER_USER ishlatiladi)
+    is_banned       INTEGER NOT NULL DEFAULT 0  -- 1 = majburan ruxsatlari olib tashlangan (status'dan mustaqil)
 );
 
 CREATE TABLE IF NOT EXISTS pending_requests (
@@ -107,6 +108,10 @@ def init_db():
             conn.execute("ALTER TABLE bots ADD COLUMN paid_until INTEGER")
         except sqlite3.OperationalError:
             pass
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN is_banned INTEGER NOT NULL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
 
 
 # ---------- users ----------
@@ -171,6 +176,16 @@ def get_user_max_bots(telegram_id: int):
     return row["max_bots"] if row else None
 
 
+def is_banned(telegram_id: int) -> bool:
+    row = get_user(telegram_id)
+    return bool(row["is_banned"]) if row else False
+
+
+def set_user_banned(telegram_id: int, banned: bool):
+    with get_conn() as conn:
+        conn.execute("UPDATE users SET is_banned=? WHERE telegram_id=?", (1 if banned else 0, telegram_id))
+
+
 def get_setting(key: str, default=None):
     with get_conn() as conn:
         row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
@@ -204,7 +219,7 @@ def is_user_approved(telegram_id: int) -> bool:
     if is_admin(telegram_id):
         return True
     row = get_user(telegram_id)
-    return bool(row and row["status"] == "approved")
+    return bool(row and row["status"] == "approved" and not row["is_banned"])
 
 
 # ---------- pending requests ----------
