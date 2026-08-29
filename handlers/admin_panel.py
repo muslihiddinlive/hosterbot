@@ -1,5 +1,6 @@
 import html
 import time
+import logging
 from datetime import datetime
 
 from aiogram import Router, F, Bot
@@ -15,6 +16,7 @@ from aiogram.exceptions import TelegramBadRequest
 from services.backup import backup_database
 
 router = Router()
+log = logging.getLogger("hosterbot")
 
 
 @router.message(F.text == "🗄 DB backup tekshirish")
@@ -59,38 +61,41 @@ async def cb_admin_real_balance(callback: CallbackQuery, bot: Bot):
     try:
         star_amount = await bot.get_my_star_balance()
         tx_result = await bot.get_star_transactions(limit=10)
+
+        lines = [
+            f"💰 <b>Botning haqiqiy Stars balansi: {star_amount.amount} ⭐️</b>\n",
+            "<b>So'nggi tranzaksiyalar:</b>",
+        ]
+        if tx_result.transactions:
+            for tx in tx_result.transactions[:10]:
+                dt = datetime.fromtimestamp(tx.date).strftime("%Y-%m-%d %H:%M")
+                sign = "+" if tx.source else "-"
+                lines.append(f"• {sign}{tx.amount} ⭐️ — {dt}")
+        else:
+            lines.append("— tranzaksiya yo'q —")
+
+        lines.append(
+            "\n⚠️ <b>Muhim:</b> bu balansni pulga aylantirish (Fragment orqali) Bot API'da "
+            "mavjud emas — Telegram buni faqat botni yaratgan shaxsiy akkaunt orqali, "
+            "2FA parol bilan, qo'lda amalga oshirishga ruxsat beradi.\n\n"
+            "Yechish uchun: fragment.com'ga botingizni yaratgan Telegram akkaunt bilan kiring "
+            "→ botingizni tanlang → \"Withdraw\" bo'limidan pulga aylantiring."
+        )
+
+        await callback.message.edit_text(
+            "\n".join(lines), parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🎁 Gift qilib o'zimga jo'natish", callback_data="admin_self_gift_withdraw")],
+                [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_panel_back")],
+            ]),
+        )
+        await callback.answer()
     except Exception as e:
-        await callback.answer(f"Xato: {e}", show_alert=True)
-        return
-
-    lines = [
-        f"💰 <b>Botning haqiqiy Stars balansi: {star_amount.amount} ⭐️</b>\n",
-        "<b>So'nggi tranzaksiyalar:</b>",
-    ]
-    if tx_result.transactions:
-        for tx in tx_result.transactions[:10]:
-            dt = datetime.fromtimestamp(tx.date).strftime("%Y-%m-%d %H:%M")
-            sign = "+" if tx.source else "-"
-            lines.append(f"• {sign}{tx.amount} ⭐️ — {dt}")
-    else:
-        lines.append("— tranzaksiya yo'q —")
-
-    lines.append(
-        "\n⚠️ <b>Muhim:</b> bu balansni pulga aylantirish (Fragment orqali) Bot API'da "
-        "mavjud emas — Telegram buni faqat botni yaratgan shaxsiy akkaunt orqali, "
-        "2FA parol bilan, qo'lda amalga oshirishga ruxsat beradi.\n\n"
-        "Yechish uchun: fragment.com'ga botingizni yaratgan Telegram akkaunt bilan kiring "
-        "→ botingizni tanlang → \"Withdraw\" bo'limidan pulga aylantiring."
-    )
-
-    await callback.message.edit_text(
-        "\n".join(lines), parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🎁 Gift qilib o'zimga jo'natish", callback_data="admin_self_gift_withdraw")],
-            [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_panel_back")],
-        ]),
-    )
-    await callback.answer()
+        log.exception("admin_real_balance xatoligi")
+        try:
+            await callback.answer(f"Xato: {str(e)[:180]}", show_alert=True)
+        except Exception:
+            pass
 
 
 @router.callback_query(F.data == "admin_self_gift_withdraw")
@@ -102,27 +107,30 @@ async def cb_admin_self_gift_withdraw(callback: CallbackQuery, bot: Bot):
     try:
         star_amount = await bot.get_my_star_balance()
         gifts_result = await bot.get_available_gifts()
-    except Exception as e:
-        await callback.answer(f"Xato: {e}", show_alert=True)
-        return
 
-    affordable = [g for g in gifts_result.gifts if g.star_count <= star_amount.amount]
-    if not affordable:
-        await callback.answer(
-            f"Bot balansiga ({star_amount.amount} ⭐️) mos keladigan gift topilmadi.",
-            show_alert=True,
+        affordable = [g for g in gifts_result.gifts if g.star_count <= star_amount.amount]
+        if not affordable:
+            await callback.answer(
+                f"Bot balansiga ({star_amount.amount} ⭐️) mos keladigan gift topilmadi.",
+                show_alert=True,
+            )
+            return
+
+        affordable.sort(key=lambda g: g.star_count)
+        await callback.message.edit_text(
+            f"🎁 <b>Gift tanlang</b> (bot balansi: {star_amount.amount} ⭐️):\n\n"
+            f"<i>Gift sizning shu (superadmin) akkauntingizga yuboriladi va bot balansidan "
+            f"kamayadi.</i>",
+            parse_mode="HTML",
+            reply_markup=admin_self_gift_list_kb(affordable),
         )
-        return
-
-    affordable.sort(key=lambda g: g.star_count)
-    await callback.message.edit_text(
-        f"🎁 <b>Gift tanlang</b> (bot balansi: {star_amount.amount} ⭐️):\n\n"
-        f"<i>Gift sizning shu (superadmin) akkauntingizga yuboriladi va bot balansidan "
-        f"kamayadi.</i>",
-        parse_mode="HTML",
-        reply_markup=admin_self_gift_list_kb(affordable),
-    )
-    await callback.answer()
+        await callback.answer()
+    except Exception as e:
+        log.exception("admin_self_gift_withdraw xatoligi")
+        try:
+            await callback.answer(f"Xato: {str(e)[:180]}", show_alert=True)
+        except Exception:
+            pass
 
 
 @router.callback_query(F.data.startswith("admin_self_gift_send:"))

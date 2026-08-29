@@ -6,6 +6,7 @@ import re
 
 from aiohttp import web
 from aiogram import Bot, Dispatcher
+from aiogram.types import ErrorEvent
 from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
@@ -38,6 +39,28 @@ dp.include_router(add_bot.router)
 dp.include_router(bot_actions.router)
 dp.include_router(admin_panel.router)
 dp.include_router(stars.router)
+
+
+@dp.errors()
+async def global_error_handler(event: ErrorEvent):
+    """
+    Har qanday handler'da (aynan try/except bilan o'ralmagan joyda) yuz beradigan
+    kutilmagan xatoni ushlab qoladi — aks holda foydalanuvchi hech narsa ko'rmay,
+    xato faqat Render loglarida (yoki umuman hech qayerda) qolib ketardi.
+    Bosilgan tugma "ishlamayapti" kabi ko'rinishining asosiy sababi shu edi.
+    """
+    log.exception(f"Ushlanmagan xato: {event.exception}")
+    update = event.update
+    try:
+        if update.callback_query:
+            await update.callback_query.answer(
+                f"⚠️ Kutilmagan xato: {str(event.exception)[:150]}", show_alert=True,
+            )
+        elif update.message:
+            await update.message.answer(f"⚠️ Kutilmagan xato: {str(event.exception)[:300]}")
+    except Exception:
+        pass
+    return True
 
 
 async def restore_running_bots(bot: Bot):
