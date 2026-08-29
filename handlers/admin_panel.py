@@ -217,7 +217,8 @@ async def cb_admin_user_view(callback: CallbackQuery):
         reply_markup=admin_user_view_kb(
             telegram_id, bots, current_max_bots=user["max_bots"],
             balance=user["balance_stars"], min_withdraw=db.get_min_withdraw_stars(),
-            is_banned=bool(user["is_banned"]),
+            is_banned=bool(user["is_banned"]), paid_before=user["lifetime_topup_stars"] > 0,
+            viewer_is_superadmin=is_superadmin(callback.from_user.id),
         ),
     )
     await callback.answer()
@@ -288,12 +289,26 @@ async def _apply_block(bot: Bot, admin_user, target_id: int, custom_hours=None) 
     return stopped, timer_text
 
 
+def _can_block_user(actor_id: int, target_id: int) -> tuple[bool, str]:
+    """To'lagan (haqiqiy mijoz, lifetime_topup_stars>0) foydalanuvchini bloklash —
+    faqat superadmin huquqi (jiddiyroq, biznesga ta'sir qiluvchi qaror).
+    Hech qachon to'lamagan foydalanuvchini esa istalgan admin bloklay oladi."""
+    if not is_admin(actor_id):
+        return False, "Ruxsat yo'q."
+    user = db.get_user(target_id)
+    paid_before = bool(user and user["lifetime_topup_stars"] > 0)
+    if paid_before and not is_superadmin(actor_id):
+        return False, "Bu foydalanuvchi avval to'lov qilgan — uni bloklash faqat superadmin huquqi."
+    return True, ""
+
+
 @router.callback_query(F.data.startswith("admin_ban_ask:"))
 async def cb_admin_ban_ask(callback: CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        await callback.answer("Ruxsat yo'q.", show_alert=True)
-        return
     target_id = int(callback.data.split(":")[1])
+    ok, reason = _can_block_user(callback.from_user.id, target_id)
+    if not ok:
+        await callback.answer(reason, show_alert=True)
+        return
     user = db.get_user(target_id)
     paid_before = bool(user and user["lifetime_topup_stars"] > 0)
     min_stars = db.get_unblock_min_stars()
@@ -325,10 +340,11 @@ async def cb_admin_ban_ask(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("admin_ban_do:"))
 async def cb_admin_ban_do(callback: CallbackQuery, bot: Bot):
-    if not is_admin(callback.from_user.id):
-        await callback.answer("Ruxsat yo'q.", show_alert=True)
-        return
     target_id = int(callback.data.split(":")[1])
+    ok, reason = _can_block_user(callback.from_user.id, target_id)
+    if not ok:
+        await callback.answer(reason, show_alert=True)
+        return
     stopped, timer_text = await _apply_block(bot, callback.from_user, target_id)
     stopped_text = f"\nTo'xtatilgan botlar: {', '.join(stopped)}" if stopped else ""
     await callback.message.edit_text(f"✅ Host qilish huquqi olib tashlandi{timer_text}.{stopped_text}")
@@ -337,10 +353,11 @@ async def cb_admin_ban_do(callback: CallbackQuery, bot: Bot):
 
 @router.callback_query(F.data.startswith("admin_ban_custom_hours:"))
 async def cb_admin_ban_custom_hours(callback: CallbackQuery, state: FSMContext):
-    if not is_admin(callback.from_user.id):
-        await callback.answer("Ruxsat yo'q.", show_alert=True)
-        return
     target_id = int(callback.data.split(":")[1])
+    ok, reason = _can_block_user(callback.from_user.id, target_id)
+    if not ok:
+        await callback.answer(reason, show_alert=True)
+        return
     await state.update_data(ban_target_id=target_id)
     await state.set_state(AdminBanCustomHours.waiting_hours)
     await callback.message.answer("Necha soatga bloklaysiz? Raqam yozing (masalan: 6, 48, 72).")
@@ -359,6 +376,10 @@ async def ban_custom_hours_entered(message: Message, state: FSMContext, bot: Bot
         return
 
     hours = int(text)
+    ok, reason = _can_block_user(message.from_user.id, target_id)
+    if not ok:
+        await message.answer(reason)
+        return
     stopped, timer_text = await _apply_block(bot, message.from_user, target_id, custom_hours=hours)
     stopped_text = f"\nTo'xtatilgan botlar: {', '.join(stopped)}" if stopped else ""
     await message.answer(f"✅ Host qilish huquqi olib tashlandi{timer_text}.{stopped_text}")
@@ -381,7 +402,8 @@ async def cb_admin_unban(callback: CallbackQuery, bot: Bot):
         reply_markup=admin_user_view_kb(
             target_id, bots, current_max_bots=user["max_bots"],
             balance=user["balance_stars"], min_withdraw=db.get_min_withdraw_stars(),
-            is_banned=False,
+            is_banned=False, paid_before=user["lifetime_topup_stars"] > 0,
+            viewer_is_superadmin=is_superadmin(callback.from_user.id),
         ),
     )
 
@@ -459,6 +481,8 @@ async def cb_admin_gift_send(callback: CallbackQuery, bot: Bot):
         reply_markup=admin_user_view_kb(
             target_id, db.list_user_bots(target_id), current_max_bots=user["max_bots"],
             balance=new_balance, min_withdraw=db.get_min_withdraw_stars(),
+            is_banned=bool(user["is_banned"]), paid_before=user["lifetime_topup_stars"] > 0,
+            viewer_is_superadmin=is_superadmin(callback.from_user.id),
         ),
     )
     await callback.answer()
