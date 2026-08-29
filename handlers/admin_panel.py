@@ -68,7 +68,7 @@ async def cb_admin_real_balance(callback: CallbackQuery, bot: Bot):
         ]
         if tx_result.transactions:
             for tx in tx_result.transactions[:10]:
-                dt = datetime.fromtimestamp(tx.date).strftime("%Y-%m-%d %H:%M")
+                dt = tx.date.strftime("%Y-%m-%d %H:%M")
                 sign = "+" if tx.source else "-"
                 lines.append(f"• {sign}{tx.amount} ⭐️ — {dt}")
         else:
