@@ -372,8 +372,14 @@ async def _apply_block(bot: Bot, admin_user, target_id: int, custom_hours=None) 
             pass
         timer_text = f" ({default_hours} soatdan keyin avtomatik ochiladi)"
     else:
+        # To'lamagan foydalanuvchi — bu shunchaki "vaqtincha to'xtatish" emas, BUTUNLAY
+        # olib tashlanadi: status 'pending'ga qaytariladi va admin bergan limit
+        # tozalanadi. Shu sabab keyinchalik "Host huquqini qaytarish" bosilsa ham,
+        # eski huquqi AVTOMATIK qaytmaydi — qaytadan tasdiqlash yoki Stars kerak bo'ladi.
         db.set_user_blocked_until(target_id, None)
-        timer_text = " (qo'lda ochish kerak bo'ladi)"
+        db.set_user_status(target_id, "pending")
+        db.set_user_max_bots(target_id, None)
+        timer_text = " — BUTUNLAY olib tashlandi (qayta tasdiqlash yoki Stars kerak bo'ladi, avtomatik qaytmaydi)"
 
     for admin_id in set(ADMIN_IDS) | set(SUPERADMIN_IDS):
         if admin_id == admin_user.id:
@@ -426,7 +432,12 @@ async def cb_admin_ban_ask(callback: CallbackQuery):
             f"xizmat haqi sifatida olinadi) — darhol ochiladi."
         )
     else:
-        note = "Bu foydalanuvchi hali to'lov qilmagan — standart tanlasangiz, siz qo'lda ochmaguningizcha bloklangan qoladi."
+        note = (
+            "Bu foydalanuvchi hali to'lov qilmagan — standart tanlasangiz, host huquqi "
+            "<b>BUTUNLAY</b> olib tashlanadi (status yangi/pending'ga qaytadi, admin bergan "
+            "limit tozalanadi). \"Host huquqini qaytarish\" bosilsa ham eski huquqi avtomatik "
+            "tiklanmaydi — qaytadan tasdiqlanishi yoki Stars orqali o'zi to'lashi kerak bo'ladi."
+        )
 
     await callback.message.edit_text(
         f"🚫 <b>Host qilish huquqini vaqtincha olib tashlaysizmi?</b>\n\n"
