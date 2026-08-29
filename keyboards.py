@@ -93,6 +93,7 @@ def admin_stars_settings_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✏️ Stars miqdorini o'zgartirish", callback_data="admin_set_stars_amount")],
         [InlineKeyboardButton(text="✏️ Muddatni o'zgartirish (soat)", callback_data="admin_set_stars_hours")],
+        [InlineKeyboardButton(text="✏️ Standart blok muddati (soat)", callback_data="admin_set_block_hours")],
         [InlineKeyboardButton(text="✏️ Min. yechish miqdori", callback_data="admin_set_min_withdraw")],
         [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_panel_back")],
     ])
@@ -185,7 +186,8 @@ def admin_user_view_kb(telegram_id: int, bots, current_max_bots=None, balance=0,
 
 def admin_ban_choice_kb(telegram_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Ha, olib tashlash", callback_data=f"admin_ban_do:{telegram_id}")],
+        [InlineKeyboardButton(text="✅ Ha, standart shartlar bilan", callback_data=f"admin_ban_do:{telegram_id}")],
+        [InlineKeyboardButton(text="⏱ Maxsus muddat belgilash (soat)", callback_data=f"admin_ban_custom_hours:{telegram_id}")],
         [InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data=f"admin_user_view:{telegram_id}")],
     ])
 

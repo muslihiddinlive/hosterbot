@@ -229,6 +229,10 @@ def get_unblock_fee_percent() -> int:
     return int(get_setting("unblock_fee_percent", 10))
 
 
+def get_block_default_hours() -> int:
+    return int(get_setting("block_default_hours", 24))
+
+
 def get_setting(key: str, default=None):
     with get_conn() as conn:
         row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()

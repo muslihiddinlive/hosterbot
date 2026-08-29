@@ -37,3 +37,8 @@ class AdminStarsSetting(StatesGroup):
     waiting_amount = State()
     waiting_hours = State()
     waiting_min_withdraw = State()
+    waiting_block_hours = State()
+
+
+class AdminBanCustomHours(StatesGroup):
+    waiting_hours = State()
