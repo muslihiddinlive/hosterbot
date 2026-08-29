@@ -207,6 +207,18 @@ def admin_gift_list_kb(telegram_id: int, gifts) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def admin_self_gift_list_kb(gifts) -> InlineKeyboardMarkup:
+    rows = []
+    for g in gifts:
+        emoji = g.sticker.emoji if getattr(g, "sticker", None) and getattr(g.sticker, "emoji", None) else "🎁"
+        rows.append([InlineKeyboardButton(
+            text=f"{emoji} {g.star_count} ⭐️",
+            callback_data=f"admin_self_gift_send:{g.id}:{g.star_count}",
+        )])
+    rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_real_balance")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def admin_all_bots_kb(bots) -> InlineKeyboardMarkup:
     rows = []
     for b in bots:

@@ -9,7 +9,7 @@ from aiogram.fsm.context import FSMContext
 import database as db
 from config import is_admin, is_superadmin, STORAGE_GROUP_ID, ADMIN_IDS, SUPERADMIN_IDS
 from states import AdminMessageUser, AdminSetLimit, AdminStarsSetting, AdminBanCustomHours
-from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb, admin_gift_list_kb, admin_ban_choice_kb
+from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb, admin_gift_list_kb, admin_self_gift_list_kb, admin_ban_choice_kb
 from services.deploy_manager import stop_bot_process
 from aiogram.exceptions import TelegramBadRequest
 from services.backup import backup_database
@@ -86,9 +86,62 @@ async def cb_admin_real_balance(callback: CallbackQuery, bot: Bot):
     await callback.message.edit_text(
         "\n".join(lines), parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎁 Gift qilib o'zimga jo'natish", callback_data="admin_self_gift_withdraw")],
             [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_panel_back")],
         ]),
     )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_self_gift_withdraw")
+async def cb_admin_self_gift_withdraw(callback: CallbackQuery, bot: Bot):
+    if not is_superadmin(callback.from_user.id):
+        await callback.answer("Bu faqat superadminlar uchun.", show_alert=True)
+        return
+
+    try:
+        star_amount = await bot.get_my_star_balance()
+        gifts_result = await bot.get_available_gifts()
+    except Exception as e:
+        await callback.answer(f"Xato: {e}", show_alert=True)
+        return
+
+    affordable = [g for g in gifts_result.gifts if g.star_count <= star_amount.amount]
+    if not affordable:
+        await callback.answer(
+            f"Bot balansiga ({star_amount.amount} ⭐️) mos keladigan gift topilmadi.",
+            show_alert=True,
+        )
+        return
+
+    affordable.sort(key=lambda g: g.star_count)
+    await callback.message.edit_text(
+        f"🎁 <b>Gift tanlang</b> (bot balansi: {star_amount.amount} ⭐️):\n\n"
+        f"<i>Gift sizning shu (superadmin) akkauntingizga yuboriladi va bot balansidan "
+        f"kamayadi.</i>",
+        parse_mode="HTML",
+        reply_markup=admin_self_gift_list_kb(affordable),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_self_gift_send:"))
+async def cb_admin_self_gift_send(callback: CallbackQuery, bot: Bot):
+    if not is_superadmin(callback.from_user.id):
+        await callback.answer("Bu faqat superadminlar uchun.", show_alert=True)
+        return
+    _, gift_id, price_s = callback.data.split(":")
+
+    try:
+        await bot.send_gift(user_id=callback.from_user.id, gift_id=gift_id)
+    except TelegramBadRequest as e:
+        await callback.answer(f"Gift yuborilmadi: {e}", show_alert=True)
+        return
+    except Exception as e:
+        await callback.answer(f"Kutilmagan xato: {e}", show_alert=True)
+        return
+
+    await callback.message.edit_text(f"✅ Gift ({price_s} ⭐️) sizga yuborildi. Bot balansi kamaydi.")
     await callback.answer()
 
 
