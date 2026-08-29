@@ -3,7 +3,7 @@ import time
 from datetime import datetime
 
 from aiogram import Router, F, Bot
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 
 import database as db
@@ -47,6 +47,48 @@ async def cb_admin_panel_back(callback: CallbackQuery):
         await callback.answer("Ruxsat yo'q.", show_alert=True)
         return
     await callback.message.edit_text("Admin panel:", reply_markup=admin_panel_kb(is_superadmin=is_superadmin(callback.from_user.id)))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_real_balance")
+async def cb_admin_real_balance(callback: CallbackQuery, bot: Bot):
+    if not is_superadmin(callback.from_user.id):
+        await callback.answer("Bu faqat superadminlar uchun.", show_alert=True)
+        return
+
+    try:
+        star_amount = await bot.get_my_star_balance()
+        tx_result = await bot.get_star_transactions(limit=10)
+    except Exception as e:
+        await callback.answer(f"Xato: {e}", show_alert=True)
+        return
+
+    lines = [
+        f"💰 <b>Botning haqiqiy Stars balansi: {star_amount.amount} ⭐️</b>\n",
+        "<b>So'nggi tranzaksiyalar:</b>",
+    ]
+    if tx_result.transactions:
+        for tx in tx_result.transactions[:10]:
+            dt = datetime.fromtimestamp(tx.date).strftime("%Y-%m-%d %H:%M")
+            sign = "+" if tx.source else "-"
+            lines.append(f"• {sign}{tx.amount} ⭐️ — {dt}")
+    else:
+        lines.append("— tranzaksiya yo'q —")
+
+    lines.append(
+        "\n⚠️ <b>Muhim:</b> bu balansni pulga aylantirish (Fragment orqali) Bot API'da "
+        "mavjud emas — Telegram buni faqat botni yaratgan shaxsiy akkaunt orqali, "
+        "2FA parol bilan, qo'lda amalga oshirishga ruxsat beradi.\n\n"
+        "Yechish uchun: fragment.com'ga botingizni yaratgan Telegram akkaunt bilan kiring "
+        "→ botingizni tanlang → \"Withdraw\" bo'limidan pulga aylantiring."
+    )
+
+    await callback.message.edit_text(
+        "\n".join(lines), parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_panel_back")],
+        ]),
+    )
     await callback.answer()
 
 
