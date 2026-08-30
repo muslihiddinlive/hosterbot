@@ -16,6 +16,7 @@ from services.file_utils import (
     detect_language_from_zip, extract_zip, bot_workdir, write_env_file,
     resolve_project_root, find_requirements_txt, normalize_requirements_filename,
     list_py_files_in_zip, resolve_start_command, fix_all_py_encodings,
+    detect_external_imports,
 )
 from services.deploy_manager import run_build_command, start_bot_process, static_scan, read_log_tail, is_running
 from services.resource_monitor import can_start_new_bot
@@ -86,10 +87,13 @@ async def receive_code(message: Message, state: FSMContext, bot: Bot):
     local_path = os.path.join(tmp_dir, file_name)
     await bot.download(doc, destination=local_path)
 
+    external_imports: list[str] = []
     if is_py:
         language = "python"
         with open(local_path, "r", encoding="utf-8", errors="ignore") as f:
-            warnings = static_scan(f.read())
+            code_text = f.read()
+        warnings = static_scan(code_text)
+        external_imports = detect_external_imports(code_text)
     else:
         language = detect_language_from_zip(local_path)
         warnings = []
@@ -113,6 +117,7 @@ async def receive_code(message: Message, state: FSMContext, bot: Bot):
     await state.update_data(
         tmp_path=local_path, tmp_dir=tmp_dir, file_name=file_name,
         is_zip=is_zip, language=language, storage_file_id=storage_file_id,
+        external_imports=external_imports,
     )
 
     warn_text = ""
@@ -139,11 +144,22 @@ async def receive_code(message: Message, state: FSMContext, bot: Bot):
 
     if is_py:
         await state.set_state(AddBot.waiting_requirements)
+        if external_imports:
+            libs_list = ", ".join(f"<code>{html.escape(lib)}</code>" for lib in external_imports)
+            deps_text = (
+                f"\n\n📦 Kodingizda quyidagi tashqi kutubxonalar ishlatilgani aniqlandi: {libs_list}\n"
+                f"Bular avtomatik o'rnatilishi uchun <b>requirements.txt</b> faylini yuboring "
+                f"(yoki \"O'tkazib yuborish\"ni bossangiz, bot shu kutubxonalarsiz ishga tushiriladi va "
+                f"<code>ModuleNotFoundError</code> bilan qulashi mumkin)."
+            )
+        else:
+            deps_text = (
+                "\n\nAgar botingiz tashqi kutubxonalar ishlatsa (masalan <code>aiogram</code>, <code>requests</code>, "
+                "<code>python-telegram-bot</code> va h.k.), endi <b>requirements.txt</b> faylini yuboring.\n"
+                "Agar tashqi kutubxona kerak bo'lmasa (faqat standart Python), pastdagi tugmani bosing."
+            )
         await message.answer(
-            "✅ Kod qabul qilindi." + warn_text + files_hint + "\n\n"
-            "Agar botingiz tashqi kutubxonalar ishlatsa (masalan <code>aiogram</code>, <code>requests</code>, "
-            "<code>python-telegram-bot</code> va h.k.), endi <b>requirements.txt</b> faylini yuboring.\n"
-            "Agar tashqi kutubxona kerak bo'lmasa (faqat standart Python), pastdagi tugmani bosing.",
+            "✅ Kod qabul qilindi." + warn_text + files_hint + deps_text,
             parse_mode="HTML",
             reply_markup=skip_requirements_kb(),
         )
@@ -185,7 +201,21 @@ async def receive_requirements(message: Message, state: FSMContext, bot: Bot):
 
 @router.message(AddBot.waiting_requirements, F.text == "➡️ O'tkazib yuborish (kerak emas)")
 async def skip_requirements(message: Message, state: FSMContext):
+    data = await state.get_data()
+    external_imports = data.get("external_imports") or []
     await state.set_state(AddBot.waiting_build_cmd)
+
+    if external_imports:
+        libs_list = ", ".join(f"<code>{html.escape(lib)}</code>" for lib in external_imports)
+        await message.answer(
+            f"⚠️ <b>Diqqat:</b> kodingizda {libs_list} kabi tashqi kutubxonalar borligi aniqlangan edi, "
+            f"lekin requirements.txt o'tkazib yuborildi. Bot ishga tushganda "
+            f"<code>ModuleNotFoundError</code> bilan qulashi mumkin.\n\n"
+            f"Davom etsangiz, keyinroq \"Mening botlarim\" bo'limidan botni tahrirlab, "
+            f"requirements.txt qo'shishingiz mumkin.",
+            parse_mode="HTML",
+        )
+
     await message.answer(
         "Yaxshi, tashqi kutubxonasiz davom etamiz.\n\n"
         "Build buyrug'i kerak bo'lmaydi. Pastdagi tugmani bosing (tavsiya etiladi), "

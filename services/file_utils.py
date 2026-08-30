@@ -182,6 +182,77 @@ def fix_all_py_encodings(root_dir: str) -> dict:
     return {"fixed": fixed, "failed": failed}
 
 
+import ast
+import sys
+
+# Ba'zi paketlarning PyPI nomi import nomidan farq qiladi (masalan
+# "python-telegram-bot" -> import telegram, "pyTelegramBotAPI" -> import telebot).
+# To'liq ro'yxat emas, faqat eng ko'p uchraydigan hollar uchun ogohlantirish matnida
+# to'g'ri nom ko'rsatish uchun.
+_IMPORT_TO_PACKAGE = {
+    "telegram": "python-telegram-bot",
+    "telebot": "pyTelegramBotAPI",
+    "aiogram": "aiogram",
+    "aiosqlite": "aiosqlite",
+    "cv2": "opencv-python",
+    "PIL": "Pillow",
+    "yaml": "PyYAML",
+    "bs4": "beautifulsoup4",
+    "dotenv": "python-dotenv",
+    "dateutil": "python-dateutil",
+    "sklearn": "scikit-learn",
+    "requests": "requests",
+    "aiohttp": "aiohttp",
+    "flask": "Flask",
+    "django": "Django",
+    "sqlalchemy": "SQLAlchemy",
+    "pymongo": "pymongo",
+    "psycopg2": "psycopg2-binary",
+}
+
+
+def _stdlib_module_names() -> set[str]:
+    names = set(getattr(sys, "stdlib_module_names", ()))
+    # ast'da har doim ham to'liq bo'lmasligi mumkin bo'lgan, lekin amalda
+    # standart hisoblanadigan ba'zi ichki/eski nomlar uchun qo'shimcha:
+    names |= {"_thread", "__future__"}
+    return names
+
+
+def detect_external_imports(code_text: str) -> list[str]:
+    """
+    Berilgan Python kodidagi standart kutubxonaga KIRMAYDIGAN top-level
+    importlarni aniqlaydi (masalan "aiogram", "aiosqlite"). Kod sintaksis
+    xatosi bo'lsa yoki hech narsa topilmasa, bo'sh ro'yxat qaytaradi — bu
+    faqat ogohlantirish uchun, build jarayonini bloklamaydi.
+    Har bir element PyPI'dagi (taxminiy) o'rnatish nomida qaytariladi
+    (masalan import "telegram" -> "python-telegram-bot").
+    """
+    try:
+        tree = ast.parse(code_text)
+    except SyntaxError:
+        return []
+
+    stdlib = _stdlib_module_names()
+    found_modules: set[str] = set()
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                found_modules.add(alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            if node.level and node.level > 0:
+                continue  # nisbiy import (masalan "from . import x") — loyihaning o'zi
+            if node.module:
+                found_modules.add(node.module.split(".")[0])
+
+    external = sorted(
+        m for m in found_modules
+        if m not in stdlib and m not in ("__main__",)
+    )
+    return [_IMPORT_TO_PACKAGE.get(m, m) for m in external]
+
+
 def bot_workdir(bot_id: int) -> str:
     path = os.path.join(DATA_DIR, f"bot_{bot_id}")
     os.makedirs(path, exist_ok=True)
