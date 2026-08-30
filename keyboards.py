@@ -148,6 +148,7 @@ def admin_panel_kb(is_superadmin: bool = False) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="👥 Foydalanuvchilar", callback_data="admin_users")],
         [InlineKeyboardButton(text="📋 Barcha botlar", callback_data="admin_all_bots")],
         [InlineKeyboardButton(text="➕ Bot deploy qilish (admin nomidan)", callback_data="admin_add_bot")],
+        [InlineKeyboardButton(text="📢 Barcha userlarga xabar", callback_data="admin_broadcast_ask")],
     ]
     if is_superadmin:
         rows.append([InlineKeyboardButton(text="⭐️ Stars narxi sozlamalari", callback_data="admin_stars_settings")])
@@ -200,6 +201,13 @@ def admin_revoke_choice_kb(telegram_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Ha, huquqini olib tashla", callback_data=f"admin_revoke_do:{telegram_id}")],
         [InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data=f"admin_user_view:{telegram_id}")],
+    ])
+
+
+def admin_broadcast_confirm_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Ha, yubor", callback_data="admin_broadcast_confirm")],
+        [InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_panel_back")],
     ])
 
 

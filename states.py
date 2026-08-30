@@ -42,3 +42,7 @@ class AdminStarsSetting(StatesGroup):
 
 class AdminBanCustomHours(StatesGroup):
     waiting_hours = State()
+
+
+class AdminBroadcast(StatesGroup):
+    waiting_text = State()

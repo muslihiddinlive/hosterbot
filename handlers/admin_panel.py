@@ -1,6 +1,7 @@
 import html
 import time
 import logging
+import asyncio
 from datetime import datetime
 
 from aiogram import Router, F, Bot
@@ -9,8 +10,8 @@ from aiogram.fsm.context import FSMContext
 
 import database as db
 from config import is_admin, is_superadmin, STORAGE_GROUP_ID, ADMIN_IDS, SUPERADMIN_IDS
-from states import AdminMessageUser, AdminSetLimit, AdminStarsSetting, AdminBanCustomHours
-from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb, admin_gift_list_kb, admin_self_gift_list_kb, admin_ban_choice_kb, admin_revoke_choice_kb
+from states import AdminMessageUser, AdminSetLimit, AdminStarsSetting, AdminBanCustomHours, AdminBroadcast
+from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb, admin_gift_list_kb, admin_self_gift_list_kb, admin_ban_choice_kb, admin_revoke_choice_kb, admin_broadcast_confirm_kb
 from services.deploy_manager import stop_bot_process
 from aiogram.exceptions import TelegramBadRequest
 from services.backup import backup_database
@@ -837,3 +838,60 @@ async def cb_admin_add_bot(callback: CallbackQuery, state: FSMContext):
         reply_markup=cancel_kb(),
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == "admin_broadcast_ask")
+async def cb_admin_broadcast_ask(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+    await state.set_state(AdminBroadcast.waiting_text)
+    await callback.message.answer(
+        "📢 Barcha ro'yxatdan o'tgan foydalanuvchilarga yubormoqchi bo'lgan xabaringizni yozing "
+        "(HTML formatlash qo'llab-quvvatlanadi: <b>qalin</b>, <i>egik</i> va h.k.):"
+    )
+    await callback.answer()
+
+
+@router.message(AdminBroadcast.waiting_text)
+async def admin_broadcast_text_entered(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    await state.update_data(broadcast_text=message.html_text)
+    users = db.list_all_users()
+    await message.answer(
+        f"<b>Oldindan ko'rish:</b>\n\n{message.html_text}\n\n"
+        f"👥 Jami <b>{len(users)}</b> ta foydalanuvchiga yuboriladi. Davom etamizmi?",
+        parse_mode="HTML",
+        reply_markup=admin_broadcast_confirm_kb(),
+    )
+
+
+@router.callback_query(F.data == "admin_broadcast_confirm")
+async def cb_admin_broadcast_confirm(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+    data = await state.get_data()
+    text = data.get("broadcast_text")
+    await state.clear()
+    if not text:
+        await callback.answer("Xabar matni topilmadi, qaytadan urinib ko'ring.", show_alert=True)
+        return
+
+    await callback.answer()
+    await callback.message.edit_text("📤 Yuborilmoqda...")
+
+    users = db.list_all_users()
+    sent, failed = 0, 0
+    for user_row in users:
+        try:
+            await bot.send_message(user_row["telegram_id"], text, parse_mode="HTML")
+            sent += 1
+        except Exception:
+            failed += 1
+        await asyncio.sleep(0.05)  # Telegram flood limitidan (~30 xabar/sek) saqlanish uchun
+
+    await callback.message.answer(
+        f"✅ Broadcast tugadi.\nYuborildi: {sent}\nYuborilmadi (bloklagan/xato): {failed}"
+    )
