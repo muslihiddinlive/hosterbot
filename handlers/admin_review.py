@@ -1,4 +1,5 @@
 import html
+import time
 
 from aiogram import Router, F, Bot
 from aiogram.types import CallbackQuery, Message
@@ -19,6 +20,7 @@ class ReplyToUser(StatesGroup):
 
 class ApproveGrantLimit(StatesGroup):
     waiting_number = State()
+    waiting_hours = State()
 
 
 # callback_data formatlari: req_deny:<id> | req_approve:<id> | req_reply:<id>
@@ -75,13 +77,42 @@ async def approve_grant_limit_entered(message: Message, state: FSMContext):
         return
 
     limit = int(text)
+    await state.update_data(approve_limit=limit)
+    await state.set_state(ApproveGrantLimit.waiting_hours)
+    await message.answer(
+        f"Endi bu {limit} ta bot limiti necha soatga amal qilsin? Raqam yozing (masalan: 24, 72, 720).\n"
+        f"(Muddat ham majburiy — o'tgach, ruxsat avtomatik qaytarib olinadi.)"
+    )
+
+
+@router.message(ApproveGrantLimit.waiting_hours)
+async def approve_grant_hours_entered(message: Message, state: FSMContext):
+    data = await state.get_data()
+    request_id = data.get("approve_request_id")
+    limit = data.get("approve_limit")
+    request = db.get_request(request_id)
+    if request is None:
+        await state.clear()
+        await message.answer("Xatolik: so'rov topilmadi.")
+        return
+
+    text = (message.text or "").strip()
+    if not text.isdigit() or int(text) <= 0:
+        await message.answer("Iltimos, musbat butun son yuboring (soat sifatida, masalan: 24).")
+        return
+
+    hours = int(text)
+    approved_until = int(time.time()) + hours * 3600
+
     db.set_user_status(request["telegram_id"], "approved")
     db.set_user_max_bots(request["telegram_id"], limit)
+    db.set_user_approved_until(request["telegram_id"], approved_until)
 
     await state.update_data(reply_request_id=request_id, reply_action="req_approve")
     await state.set_state(ReplyToUser.waiting_text)
     await message.answer(
-        f"✅ Ruxsat berildi — {limit} ta bot limiti bilan. Endi foydalanuvchiga yubormoqchi bo'lgan javobingizni yozing:"
+        f"✅ Ruxsat berildi — {limit} ta bot limiti, {hours} soat muddat bilan. "
+        f"Endi foydalanuvchiga yubormoqchi bo'lgan javobingizni yozing:"
     )
 
 

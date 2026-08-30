@@ -236,6 +236,45 @@ async def auto_unblock_watchdog():
             log.warning(f"Auto-unblock watchdog xatoligi: {e}")
 
 
+async def approval_expiry_watchdog():
+    """
+    Admin tomonidan berilgan ruxsatning majburiy muddati (approved_until) o'tib
+    ketgan foydalanuvchilarni topib, ruxsatini avtomatik qaytarib oladi: status
+    'pending'ga qaytadi, limit tozalanadi, ishlab turgan (Stars orqali emas,
+    admin ruxsati bilan hostlangan) botlari to'xtatiladi.
+    """
+    while True:
+        await asyncio.sleep(BILLING_WATCHDOG_INTERVAL_SEC)
+        try:
+            for user_row in db.list_expired_approvals():
+                telegram_id = user_row["telegram_id"]
+                db.set_user_status(telegram_id, "pending")
+                db.set_user_max_bots(telegram_id, None)
+                db.set_user_approved_until(telegram_id, None)
+
+                stopped = []
+                for b in db.list_user_bots(telegram_id):
+                    if b["status"] == "running" and not b["stars_hosted"]:
+                        stop_bot_process(b["bot_id"])
+                        db.set_bot_status(b["bot_id"], "stopped", None)
+                        stopped.append(b["bot_username"] or b["display_name"] or f"Bot #{b['bot_id']}")
+
+                try:
+                    stopped_text = f"\nTo'xtatilgan botlar: {', '.join(stopped)}" if stopped else ""
+                    await bot.send_message(
+                        telegram_id,
+                        f"⏱ Admin tomonidan berilgan host qilish muddatingiz tugadi, "
+                        f"ruxsat avtomatik qaytarib olindi.{stopped_text}\n\n"
+                        f"Davom etish uchun adminga qaytadan murojaat qiling yoki \"💳 Hisob\" "
+                        f"orqali Stars bilan o'zingiz to'lang.",
+                    )
+                except Exception:
+                    pass
+                await backup_database(bot)
+        except Exception as e:
+            log.warning(f"Approval expiry watchdog xatoligi: {e}")
+
+
 async def on_startup(app: web.Application):
     await restore_database(bot)
     db.init_db()
@@ -243,6 +282,7 @@ async def on_startup(app: web.Application):
     asyncio.create_task(crash_watchdog())
     asyncio.create_task(billing_watchdog())
     asyncio.create_task(auto_unblock_watchdog())
+    asyncio.create_task(approval_expiry_watchdog())
 
     if not WEBHOOK_BASE_URL:
         log.warning(

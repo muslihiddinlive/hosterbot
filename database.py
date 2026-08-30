@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS users (
     approved_at     INTEGER,
     balance_stars   INTEGER NOT NULL DEFAULT 0,  -- Telegram Stars prepaid balans
     max_bots        INTEGER,  -- admin belgilagan individual limit (NULL = global MAX_BOTS_PER_USER ishlatiladi)
+    approved_until  INTEGER,  -- admin tasdig'i orqali berilgan ruxsatning muddati (epoch) — majburiy, har approve'da beriladi
     is_banned       INTEGER NOT NULL DEFAULT 0,  -- 1 = host qilish huquqi vaqtincha olib tashlangan
     blocked_until   INTEGER,  -- to'lov qilgan (lifetime_topup_stars>0) userlar uchun avtomatik ochilish vaqti (epoch)
     lifetime_topup_stars INTEGER NOT NULL DEFAULT 0  -- umr bo'yi to'langan jami stars (balans sarflansa ham kamaymaydi — "haqiqiy to'lovchi"ligini bilish uchun)
@@ -115,6 +116,10 @@ def init_db():
         except sqlite3.OperationalError:
             pass
         try:
+            conn.execute("ALTER TABLE users ADD COLUMN approved_until INTEGER")
+        except sqlite3.OperationalError:
+            pass
+        try:
             conn.execute("ALTER TABLE users ADD COLUMN blocked_until INTEGER")
         except sqlite3.OperationalError:
             pass
@@ -184,6 +189,28 @@ def set_user_max_bots(telegram_id: int, max_bots):
 def get_user_max_bots(telegram_id: int):
     row = get_user(telegram_id)
     return row["max_bots"] if row else None
+
+
+def set_user_approved_until(telegram_id: int, ts):
+    with get_conn() as conn:
+        conn.execute("UPDATE users SET approved_until=? WHERE telegram_id=?", (ts, telegram_id))
+
+
+def get_user_approved_until(telegram_id: int):
+    row = get_user(telegram_id)
+    return row["approved_until"] if row else None
+
+
+def list_expired_approvals():
+    """Admin tomonidan berilgan muddat (approved_until) o'tib ketgan, hali ham
+    'approved' holatdagi foydalanuvchilar — approval_expiry_watchdog shulardan
+    ruxsatni avtomatik qaytarib oladi."""
+    now = int(time.time())
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM users WHERE status='approved' AND approved_until IS NOT NULL AND approved_until <= ?",
+            (now,),
+        ).fetchall()
 
 
 def is_banned(telegram_id: int) -> bool:
