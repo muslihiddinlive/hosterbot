@@ -11,7 +11,7 @@ from aiogram.fsm.context import FSMContext
 import database as db
 from config import is_admin, is_superadmin, STORAGE_GROUP_ID, ADMIN_IDS, SUPERADMIN_IDS
 from states import AdminMessageUser, AdminSetLimit, AdminStarsSetting, AdminBanCustomHours, AdminBroadcast
-from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb, admin_gift_list_kb, admin_self_gift_list_kb, admin_ban_choice_kb, admin_revoke_choice_kb, admin_broadcast_confirm_kb, admin_sender_choice_kb
+from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb, admin_gift_list_kb, admin_self_gift_list_kb, admin_ban_choice_kb, admin_broadcast_confirm_kb, admin_sender_choice_kb
 from services.deploy_manager import stop_bot_process
 from aiogram.exceptions import TelegramBadRequest
 from services.backup import backup_database
@@ -323,7 +323,6 @@ async def cb_admin_user_view(callback: CallbackQuery):
             balance=user["balance_stars"], min_withdraw=db.get_min_withdraw_stars(),
             is_banned=bool(user["is_banned"]), paid_before=user["lifetime_topup_stars"] > 0,
             viewer_is_superadmin=is_superadmin(callback.from_user.id),
-            is_approved=user["status"] == "approved",
         ),
     )
     await callback.answer()
@@ -520,98 +519,8 @@ async def cb_admin_unban(callback: CallbackQuery, bot: Bot):
             balance=user["balance_stars"], min_withdraw=db.get_min_withdraw_stars(),
             is_banned=False, paid_before=user["lifetime_topup_stars"] > 0,
             viewer_is_superadmin=is_superadmin(callback.from_user.id),
-            is_approved=user["status"] == "approved",
         ),
     )
-
-
-@router.callback_query(F.data.startswith("admin_revoke_ask:"))
-async def cb_admin_revoke_ask(callback: CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        await callback.answer("Ruxsat yo'q.", show_alert=True)
-        return
-    target_id = int(callback.data.split(":")[1])
-    user = db.get_user(target_id)
-    if user is None or user["status"] != "approved":
-        await callback.answer("Bu foydalanuvchida admin bergan tasdiqlangan huquq yo'q.", show_alert=True)
-        return
-    await callback.message.answer(
-        f"⚠️ Foydalanuvchi <code>{target_id}</code>ga admin tomonidan berilgan host qilish huquqi "
-        f"<b>butunlay</b> olib tashlanadi (xuddi umuman berilmagandek): tasdiqlangan holati va bot "
-        f"limiti tozalanadi, hozir ishlab turgan botlari to'xtatiladi.\n\n"
-        f"Bu <b>ban emas</b> — foydalanuvchi keyinchalik Stars to'lab yana bot host qila oladi. "
-        f"Davom etasizmi?",
-        parse_mode="HTML",
-        reply_markup=admin_revoke_choice_kb(target_id),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("admin_revoke_do:"))
-async def cb_admin_revoke_do(callback: CallbackQuery, bot: Bot):
-    if not is_admin(callback.from_user.id):
-        await callback.answer("Ruxsat yo'q.", show_alert=True)
-        return
-    target_id = int(callback.data.split(":")[1])
-    user = db.get_user(target_id)
-    if user is None or user["status"] != "approved":
-        await callback.answer("Bu foydalanuvchida admin bergan tasdiqlangan huquq yo'q.", show_alert=True)
-        return
-
-    # Qanday berilgan bo'lsa (admin tasdiqi orqali), shunday ayriladi: faqat
-    # status va admin bergan limit tozalanadi. is_banned'ga TEGILMAYDI — shu
-    # sabab bu haqiqiy "ban" emas, foydalanuvchi Stars to'lab yana ishlata oladi.
-    db.set_user_status(target_id, "pending")
-    db.set_user_max_bots(target_id, None)
-
-    stopped = []
-    for b in db.list_user_bots(target_id):
-        if b["status"] == "running":
-            stop_bot_process(b["bot_id"])
-            db.set_bot_status(b["bot_id"], "stopped", None)
-            stopped.append(b["bot_username"] or b["display_name"] or f"Bot #{b['bot_id']}")
-
-    try:
-        await bot.send_message(
-            target_id,
-            "⛔️ Sizga admin tomonidan berilgan (bepul) host qilish huquqi butunlay olib tashlandi.\n\n"
-            "Yangi bot host qilish uchun endi \"💳 Hisob\" bo'limidan Stars to'lashingiz kerak bo'ladi, "
-            "yoki adminga qaytadan murojaat qilishingiz mumkin.",
-        )
-    except Exception:
-        pass
-
-    for admin_id in set(ADMIN_IDS) | set(SUPERADMIN_IDS):
-        if admin_id == callback.from_user.id:
-            continue
-        try:
-            await bot.send_message(
-                admin_id,
-                f"ℹ️ {callback.from_user.first_name} foydalanuvchi <code>{target_id}</code>ning admin "
-                f"bergan host huquqini butunlay olib tashladi.",
-                parse_mode="HTML",
-            )
-        except Exception:
-            pass
-
-    await backup_database(bot)
-
-    stopped_text = f" To'xtatilgan botlar: {', '.join(stopped)}." if stopped else ""
-    await callback.message.answer(f"✅ Host qilish huquqi butunlay olib tashlandi.{stopped_text}")
-
-    updated_user = db.get_user(target_id)
-    bots = db.list_user_bots(target_id)
-    await callback.message.answer(
-        "Yangilangan holat:",
-        reply_markup=admin_user_view_kb(
-            target_id, bots, current_max_bots=updated_user["max_bots"],
-            balance=updated_user["balance_stars"], min_withdraw=db.get_min_withdraw_stars(),
-            is_banned=bool(updated_user["is_banned"]), paid_before=updated_user["lifetime_topup_stars"] > 0,
-            viewer_is_superadmin=is_superadmin(callback.from_user.id),
-            is_approved=updated_user["status"] == "approved",
-        ),
-    )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("admin_gift_withdraw:"))
@@ -689,7 +598,6 @@ async def cb_admin_gift_send(callback: CallbackQuery, bot: Bot):
             balance=new_balance, min_withdraw=db.get_min_withdraw_stars(),
             is_banned=bool(user["is_banned"]), paid_before=user["lifetime_topup_stars"] > 0,
             viewer_is_superadmin=is_superadmin(callback.from_user.id),
-            is_approved=user["status"] == "approved",
         ),
     )
     await callback.answer()

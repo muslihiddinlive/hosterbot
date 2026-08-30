@@ -167,7 +167,7 @@ def admin_users_kb(users) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def admin_user_view_kb(telegram_id: int, bots, current_max_bots=None, balance=0, min_withdraw=15, is_banned=False, paid_before=False, viewer_is_superadmin=True, is_approved=False) -> InlineKeyboardMarkup:
+def admin_user_view_kb(telegram_id: int, bots, current_max_bots=None, balance=0, min_withdraw=15, is_banned=False, paid_before=False, viewer_is_superadmin=True) -> InlineKeyboardMarkup:
     rows = []
     for b in bots:
         label = b["bot_username"] or b["display_name"] or f"Bot #{b['bot_id']}"
@@ -182,26 +182,10 @@ def admin_user_view_kb(telegram_id: int, bots, current_max_bots=None, balance=0,
     elif paid_before and not viewer_is_superadmin:
         rows.append([InlineKeyboardButton(text="🔒 Bloklash (faqat superadmin, to'lov qilgan)", callback_data=f"admin_ban_ask:{telegram_id}")])
     else:
-        rows.append([InlineKeyboardButton(text="🚫 Host huquqini vaqtincha olib qo'yish", callback_data=f"admin_ban_ask:{telegram_id}")])
-    # Faqat admin TASDIQLAB bergan ("approved") huquqni, aynan shu yo'l bilan
-    # (admin qarori bilan) qaytarib olish — Stars orqali to'lash huquqiga tegmaydi,
-    # shuning uchun bloklashdan (yuqoridagi tugma) farqli, foydalanuvchi keyin
-    # Stars to'lab yana ishlata oladi.
-    if is_approved and not is_banned:
-        rows.append([InlineKeyboardButton(
-            text="🗑 Host huquqini butunlay olib qo'yish (admin bergani)",
-            callback_data=f"admin_revoke_ask:{telegram_id}",
-        )])
+        rows.append([InlineKeyboardButton(text="🚫 Host huquqini olib qo'yish", callback_data=f"admin_ban_ask:{telegram_id}")])
     rows.append([InlineKeyboardButton(text="✉️ Habar yozish", callback_data=f"admin_msg_user:{telegram_id}")])
     rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_users")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def admin_revoke_choice_kb(telegram_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Ha, huquqini olib tashla", callback_data=f"admin_revoke_do:{telegram_id}")],
-        [InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data=f"admin_user_view:{telegram_id}")],
-    ])
 
 
 def admin_sender_choice_kb(callback_prefix: str) -> InlineKeyboardMarkup:
