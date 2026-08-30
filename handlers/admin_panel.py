@@ -11,7 +11,7 @@ from aiogram.fsm.context import FSMContext
 import database as db
 from config import is_admin, is_superadmin, STORAGE_GROUP_ID, ADMIN_IDS, SUPERADMIN_IDS
 from states import AdminMessageUser, AdminSetLimit, AdminStarsSetting, AdminBanCustomHours, AdminBroadcast
-from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb, admin_gift_list_kb, admin_self_gift_list_kb, admin_ban_choice_kb, admin_revoke_choice_kb, admin_broadcast_confirm_kb
+from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb, admin_gift_list_kb, admin_self_gift_list_kb, admin_ban_choice_kb, admin_revoke_choice_kb, admin_broadcast_confirm_kb, admin_sender_choice_kb
 from services.deploy_manager import stop_bot_process
 from aiogram.exceptions import TelegramBadRequest
 from services.backup import backup_database
@@ -774,15 +774,39 @@ async def cb_admin_msg_user(callback: CallbackQuery, state: FSMContext):
 
 
 @router.message(AdminMessageUser.waiting_text)
-async def send_admin_msg(message: Message, state: FSMContext, bot: Bot):
+async def admin_msg_text_entered(message: Message, state: FSMContext):
+    await state.update_data(msg_text=message.text)
+
+    if is_superadmin(message.from_user.id):
+        await message.answer(
+            "Xabar kim nomidan yuborilsin?",
+            reply_markup=admin_sender_choice_kb("admin_msg_sender"),
+        )
+        return
+
+    await _send_admin_msg(message, state, sender="admin")
+
+
+async def _send_admin_msg(message: Message, state: FSMContext, sender: str):
     data = await state.get_data()
     target_id = data.get("msg_target_id")
+    text = data.get("msg_text")
     await state.clear()
     try:
-        await bot.send_message(target_id, f"💬 <b>Admindan xabar:</b>\n\n{html.escape(message.text)}", parse_mode="HTML")
+        await message.bot.send_message(target_id, f"{_sender_label(sender)}{html.escape(text)}", parse_mode="HTML")
         await message.answer("Xabar yuborildi ✅")
     except Exception:
         await message.answer("Xabar yuborilmadi (foydalanuvchi botni bloklagan bo'lishi mumkin).")
+
+
+@router.callback_query(F.data.startswith("admin_msg_sender:"))
+async def cb_admin_msg_sender(callback: CallbackQuery, state: FSMContext):
+    if not is_superadmin(callback.from_user.id):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+    sender = callback.data.split(":")[1]
+    await callback.answer()
+    await _send_admin_msg(callback.message, state, sender=sender)
 
 
 @router.callback_query(F.data.startswith("admin_set_limit:"))
@@ -853,18 +877,50 @@ async def cb_admin_broadcast_ask(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+def _sender_label(choice: str) -> str:
+    return "👑 <b>Egadan xabar:</b>\n\n" if choice == "owner" else "👤 <b>Admindan xabar:</b>\n\n"
+
+
 @router.message(AdminBroadcast.waiting_text)
 async def admin_broadcast_text_entered(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         return
     await state.update_data(broadcast_text=message.html_text)
+
+    if is_superadmin(message.from_user.id):
+        await message.answer(
+            "Xabar kim nomidan yuborilsin?",
+            reply_markup=admin_sender_choice_kb("admin_broadcast_sender"),
+        )
+        return
+
+    await state.update_data(broadcast_sender="admin")
+    await _show_broadcast_preview(message, state)
+
+
+async def _show_broadcast_preview(message: Message, state: FSMContext):
+    data = await state.get_data()
+    text = data.get("broadcast_text", "")
+    sender = data.get("broadcast_sender", "admin")
     users = db.list_all_users()
     await message.answer(
-        f"<b>Oldindan ko'rish:</b>\n\n{message.html_text}\n\n"
+        f"<b>Oldindan ko'rish</b> ({'👑 Ega' if sender == 'owner' else '👤 Admin'} nomidan):\n\n"
+        f"{_sender_label(sender)}{text}\n\n"
         f"👥 Jami <b>{len(users)}</b> ta foydalanuvchiga yuboriladi. Davom etamizmi?",
         parse_mode="HTML",
         reply_markup=admin_broadcast_confirm_kb(),
     )
+
+
+@router.callback_query(F.data.startswith("admin_broadcast_sender:"))
+async def cb_admin_broadcast_sender(callback: CallbackQuery, state: FSMContext):
+    if not is_superadmin(callback.from_user.id):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+    sender = callback.data.split(":")[1]
+    await state.update_data(broadcast_sender=sender)
+    await callback.answer()
+    await _show_broadcast_preview(callback.message, state)
 
 
 @router.callback_query(F.data == "admin_broadcast_confirm")
@@ -874,11 +930,13 @@ async def cb_admin_broadcast_confirm(callback: CallbackQuery, state: FSMContext,
         return
     data = await state.get_data()
     text = data.get("broadcast_text")
+    sender = data.get("broadcast_sender", "admin")
     await state.clear()
     if not text:
         await callback.answer("Xabar matni topilmadi, qaytadan urinib ko'ring.", show_alert=True)
         return
 
+    full_text = _sender_label(sender) + text
     await callback.answer()
     await callback.message.edit_text("📤 Yuborilmoqda...")
 
@@ -886,7 +944,7 @@ async def cb_admin_broadcast_confirm(callback: CallbackQuery, state: FSMContext,
     sent, failed = 0, 0
     for user_row in users:
         try:
-            await bot.send_message(user_row["telegram_id"], text, parse_mode="HTML")
+            await bot.send_message(user_row["telegram_id"], full_text, parse_mode="HTML")
             sent += 1
         except Exception:
             failed += 1

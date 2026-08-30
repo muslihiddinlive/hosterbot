@@ -204,6 +204,13 @@ def admin_revoke_choice_kb(telegram_id: int) -> InlineKeyboardMarkup:
     ])
 
 
+def admin_sender_choice_kb(callback_prefix: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👤 Admin sifatida", callback_data=f"{callback_prefix}:admin")],
+        [InlineKeyboardButton(text="👑 Ega sifatida", callback_data=f"{callback_prefix}:owner")],
+    ])
+
+
 def admin_broadcast_confirm_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Ha, yubor", callback_data="admin_broadcast_confirm")],
