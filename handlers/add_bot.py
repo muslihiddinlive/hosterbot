@@ -494,7 +494,7 @@ async def finalize_deploy(message: Message, state: FSMContext, bot: Bot):
                 f"\"💳 Hisob\" orqali to'ldiring, so'ng \"Mening botlarim\"dan ishga tushiring.",
             )
             return
-        db.add_user_balance(owner_id, -stars_per_unit)
+        db.add_user_balance(owner_id, -stars_per_unit, reason=f"Self-service deploy (bot #{bot_id})")
         paid_until = int(time.time()) + seconds_per_unit
         db.set_bot_stars_payment(bot_id, paid_until)
 

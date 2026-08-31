@@ -14,7 +14,7 @@ from aiogram.fsm.context import FSMContext
 
 import database as db
 from config import is_admin, is_superadmin, STORAGE_GROUP_ID, ADMIN_IDS, SUPERADMIN_IDS
-from states import AdminMessageUser, AdminSetLimit, AdminStarsSetting, AdminBanCustomHours, AdminBroadcast, AdminTestDeploy
+from states import AdminMessageUser, AdminSetLimit, AdminStarsSetting, AdminBanCustomHours, AdminBroadcast, AdminTestDeploy, AdminSearchUser
 from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb, admin_gift_list_kb, admin_self_gift_list_kb, admin_ban_choice_kb, admin_broadcast_confirm_kb, admin_sender_choice_kb
 from services.deploy_manager import stop_bot_process, start_bot_process, run_build_command, is_running, read_log_tail
 from services.file_utils import bot_workdir
@@ -287,16 +287,12 @@ async def cb_admin_users(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("admin_user_view:"))
-async def cb_admin_user_view(callback: CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        await callback.answer("Ruxsat yo'q.", show_alert=True)
-        return
-    telegram_id = int(callback.data.split(":")[1])
+async def _build_user_view(telegram_id: int, viewer_id: int):
+    """(text, reply_markup) qaytaradi — cb_admin_user_view va qidiruv natijasi
+    ikkalasida ham ishlatiladi."""
     user = db.get_user(telegram_id)
     if user is None:
-        await callback.answer("Foydalanuvchi topilmadi.", show_alert=True)
-        return
+        return None, None
 
     bots = db.list_user_bots(telegram_id)
     status_label = {"approved": "✅ Tasdiqlangan", "pending": "⏳ Kutilmoqda", "denied": "⛔️ Rad etilgan"}
@@ -322,16 +318,57 @@ async def cb_admin_user_view(callback: CallbackQuery):
         f"⭐️ Balans: <b>{user['balance_stars']}</b> stars\n\n"
         f"<b>Botlari ({len(bots)}):</b>\n{bots_text}"
     )
-    await callback.message.edit_text(
-        text, parse_mode="HTML",
-        reply_markup=admin_user_view_kb(
-            telegram_id, bots, current_max_bots=user["max_bots"],
-            balance=user["balance_stars"], min_withdraw=db.get_min_withdraw_stars(),
-            is_banned=bool(user["is_banned"]), paid_before=user["lifetime_topup_stars"] > 0,
-            viewer_is_superadmin=is_superadmin(callback.from_user.id),
-        ),
+    kb = admin_user_view_kb(
+        telegram_id, bots, current_max_bots=user["max_bots"],
+        balance=user["balance_stars"], min_withdraw=db.get_min_withdraw_stars(),
+        is_banned=bool(user["is_banned"]), paid_before=user["lifetime_topup_stars"] > 0,
+        viewer_is_superadmin=is_superadmin(viewer_id),
     )
+    return text, kb
+
+
+@router.callback_query(F.data.startswith("admin_user_view:"))
+async def cb_admin_user_view(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+    telegram_id = int(callback.data.split(":")[1])
+    text, kb = await _build_user_view(telegram_id, callback.from_user.id)
+    if text is None:
+        await callback.answer("Foydalanuvchi topilmadi.", show_alert=True)
+        return
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
+
+
+@router.callback_query(F.data == "admin_search_user_ask")
+async def cb_admin_search_user_ask(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+    await state.set_state(AdminSearchUser.waiting_query)
+    await callback.message.answer("🔍 Telegram ID yoki username yuboring (masalan: 123456789 yoki @username):")
+    await callback.answer()
+
+
+@router.message(AdminSearchUser.waiting_query)
+async def admin_search_user_query(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    await state.clear()
+    query = (message.text or "").strip()
+
+    if query.lstrip("-").isdigit():
+        user = db.get_user(int(query))
+    else:
+        user = db.get_user_by_username(query)
+
+    if user is None:
+        await message.answer("Foydalanuvchi topilmadi.")
+        return
+
+    text, kb = await _build_user_view(user["telegram_id"], message.from_user.id)
+    await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 
 async def _apply_block(bot: Bot, admin_user, target_id: int, custom_hours=None) -> tuple[list, str]:
@@ -589,7 +626,7 @@ async def cb_admin_gift_send(callback: CallbackQuery, bot: Bot):
         await callback.answer(f"Kutilmagan xato: {e}", show_alert=True)
         return
 
-    db.add_user_balance(target_id, -price)
+    db.add_user_balance(target_id, -price, reason=f"Gift orqali yechish ({price}⭐️)")
     new_balance = db.get_user_balance(target_id)
 
     try:

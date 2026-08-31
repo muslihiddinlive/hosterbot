@@ -74,6 +74,14 @@ CREATE TABLE IF NOT EXISTS settings (
     key             TEXT PRIMARY KEY,
     value           TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS stars_ledger (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    telegram_id     INTEGER NOT NULL,
+    delta           INTEGER NOT NULL,   -- musbat = balansga qo'shildi, manfiy = yechildi
+    reason          TEXT NOT NULL,
+    created_at      INTEGER NOT NULL
+);
 """
 
 
@@ -166,14 +174,35 @@ def list_all_users():
         return conn.execute("SELECT * FROM users ORDER BY created_at DESC").fetchall()
 
 
-def add_user_balance(telegram_id: int, delta_stars: int):
-    """Balansga qo'shadi (yechish uchun manfiy son yuboring). Stars monetizatsiya
-    funksiyasi (invoice/withdraw) implementatsiya qilinganda ishlatiladi."""
+def add_user_balance(telegram_id: int, delta_stars: int, reason: str = "o'zgarish"):
+    """Balansga qo'shadi (yechish uchun manfiy son yuboring). Har bir o'zgarish
+    stars_ledger jadvaliga ham yoziladi — foydalanuvchi keyinchalik "To'lov tarixi"
+    orqali ko'ra oladi."""
     with get_conn() as conn:
         conn.execute(
             "UPDATE users SET balance_stars = balance_stars + ? WHERE telegram_id=?",
             (delta_stars, telegram_id),
         )
+        conn.execute(
+            "INSERT INTO stars_ledger (telegram_id, delta, reason, created_at) VALUES (?, ?, ?, ?)",
+            (telegram_id, delta_stars, reason, int(time.time())),
+        )
+
+
+def get_user_ledger(telegram_id: int, limit: int = 20):
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM stars_ledger WHERE telegram_id=? ORDER BY created_at DESC LIMIT ?",
+            (telegram_id, limit),
+        ).fetchall()
+
+
+def get_user_by_username(username: str):
+    username = username.lstrip("@")
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM users WHERE username=? COLLATE NOCASE", (username,)
+        ).fetchone()
 
 
 def set_user_status(telegram_id: int, status: str):

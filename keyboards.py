@@ -79,7 +79,10 @@ def env_added_kb() -> ReplyKeyboardMarkup:
 # ---------- Inline keyboards ----------
 
 def hisob_kb(hosted_bots) -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(text="➕ Balansni to'ldirish (Stars)", callback_data="stars_topup")]]
+    rows = [
+        [InlineKeyboardButton(text="➕ Balansni to'ldirish (Stars)", callback_data="stars_topup")],
+        [InlineKeyboardButton(text="📜 To'lov tarixi", callback_data="stars_history")],
+    ]
     for b in hosted_bots:
         label = b["bot_username"] or b["display_name"] or f"Bot #{b['bot_id']}"
         rows.append([InlineKeyboardButton(
@@ -158,7 +161,7 @@ def admin_panel_kb(is_superadmin: bool = False) -> InlineKeyboardMarkup:
 
 def admin_users_kb(users) -> InlineKeyboardMarkup:
     status_icon = {"approved": "✅", "pending": "⏳", "denied": "⛔️"}
-    rows = []
+    rows = [[InlineKeyboardButton(text="🔍 Qidirish (ID yoki username)", callback_data="admin_search_user_ask")]]
     for u in users:
         label = f"@{u['username']}" if u["username"] else (u["first_name"] or str(u["telegram_id"]))
         icon = "🚫" if u["is_banned"] else status_icon.get(u["status"], "❓")

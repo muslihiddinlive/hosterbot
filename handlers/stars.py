@@ -14,6 +14,7 @@ kerak bo'lmaydi (Render Free Tier'da keraksiz I/O), (2) foydalanuvchiga
 """
 import time
 import html
+from datetime import datetime
 
 from aiogram import Router, F, Bot
 from aiogram.types import CallbackQuery, Message, LabeledPrice, PreCheckoutQuery
@@ -128,7 +129,7 @@ async def process_successful_payment(message: Message):
     if user and user["is_banned"] and amount >= min_stars:
         fee = (amount * fee_pct) // 100
         credited = amount - fee
-        db.add_user_balance(user_id, credited)
+        db.add_user_balance(user_id, credited, reason=f"To'lov ({amount}⭐️, {fee}⭐️ xizmat haqi ushlab qolindi, blok ochildi)")
         db.set_user_banned(user_id, False)
         db.set_user_blocked_until(user_id, None)
         new_balance = db.get_user_balance(user_id)
@@ -142,7 +143,7 @@ async def process_successful_payment(message: Message):
         )
         return
 
-    db.add_user_balance(user_id, amount)
+    db.add_user_balance(user_id, amount, reason="Balans to'ldirish")
     new_balance = db.get_user_balance(user_id)
 
     if user and user["is_banned"]:
@@ -187,7 +188,7 @@ async def cb_stars_extend(callback: CallbackQuery, bot: Bot):
         )
         return
 
-    db.add_user_balance(bot_row["owner_id"], -stars_per_unit)
+    db.add_user_balance(bot_row["owner_id"], -stars_per_unit, reason=f"Bot uzaytirish (#{bot_id}, +24 soat)")
     now = int(time.time())
     base = bot_row["paid_until"] if (bot_row["paid_until"] and bot_row["paid_until"] > now) else now
     new_paid_until = base + seconds_per_unit
@@ -209,3 +210,20 @@ async def cb_stars_extend(callback: CallbackQuery, bot: Bot):
 
     remaining = new_paid_until - now
     await callback.answer(f"✅ Yana {stars_per_unit}⭐️ yechildi. Qolgan vaqt: {format_remaining(remaining)}", show_alert=True)
+
+
+@router.callback_query(F.data == "stars_history")
+async def cb_stars_history(callback: CallbackQuery):
+    entries = db.get_user_ledger(callback.from_user.id, limit=20)
+    if not entries:
+        await callback.answer("Hozircha to'lov tarixi bo'sh.", show_alert=True)
+        return
+
+    lines = ["📜 <b>To'lov tarixi</b> (so'nggi 20 ta):\n"]
+    for e in entries:
+        dt = datetime.fromtimestamp(e["created_at"]).strftime("%Y-%m-%d %H:%M")
+        sign = "+" if e["delta"] >= 0 else ""
+        lines.append(f"{sign}{e['delta']} ⭐️ — {html.escape(e['reason'])} ({dt})")
+
+    await callback.message.answer("\n".join(lines), parse_mode="HTML")
+    await callback.answer()

@@ -51,3 +51,7 @@ class AdminBroadcast(StatesGroup):
 class AdminTestDeploy(StatesGroup):
     waiting_token = State()
     waiting_chat_id = State()
+
+
+class AdminSearchUser(StatesGroup):
+    waiting_query = State()
