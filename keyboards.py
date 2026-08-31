@@ -255,6 +255,7 @@ def admin_bot_view_kb(bot_row) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="📡 Live log", callback_data=f"bot_live_log:{bot_row['bot_id']}"),
         ],
         [InlineKeyboardButton(text="ℹ️ Kod/log/env", callback_data=f"bot_info:{bot_row['bot_id']}")],
+        [InlineKeyboardButton(text="🧪 Shaxsiy test-deploy (o'z tokening bilan)", callback_data=f"admin_test_deploy:{bot_row['bot_id']}")],
         [InlineKeyboardButton(text="🗑 O'chirish", callback_data=f"bot_delete:{bot_row['bot_id']}")],
         [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_all_bots")],
     ])

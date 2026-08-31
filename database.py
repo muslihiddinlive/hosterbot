@@ -57,7 +57,9 @@ CREATE TABLE IF NOT EXISTS bots (
     created_at      INTEGER NOT NULL,
     deployed_by      INTEGER,             -- superadmin o'rniga deploy qilgan bo'lsa uning id'si
     stars_hosted    INTEGER NOT NULL DEFAULT 0,  -- 1 = admin tasdiqisiz, Stars balansidan hostlangan bot
-    paid_until      INTEGER               -- stars_hosted bot uchun: shu vaqtgacha ishlash huquqi to'langan (epoch)
+    paid_until      INTEGER,              -- stars_hosted bot uchun: shu vaqtgacha ishlash huquqi to'langan (epoch)
+    detected_credentials TEXT,            -- kod ichidan avtomatik topilgan token/ID'lar (JSON, admin uchun)
+    is_test_clone   INTEGER NOT NULL DEFAULT 0  -- 1 = admin shaxsiy test uchun boshqa bot kodidan clone qilgan nusxa
 );
 
 CREATE TABLE IF NOT EXISTS bot_envs (
@@ -109,6 +111,14 @@ def init_db():
             pass
         try:
             conn.execute("ALTER TABLE bots ADD COLUMN paid_until INTEGER")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE bots ADD COLUMN detected_credentials TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE bots ADD COLUMN is_test_clone INTEGER NOT NULL DEFAULT 0")
         except sqlite3.OperationalError:
             pass
         try:
@@ -369,6 +379,21 @@ def set_bot_status(bot_id: int, status: str, pid: int = None):
 def set_bot_username(bot_id: int, username: str):
     with get_conn() as conn:
         conn.execute("UPDATE bots SET bot_username=? WHERE bot_id=?", (username, bot_id))
+
+
+def set_bot_detected_credentials(bot_id: int, json_text: str):
+    with get_conn() as conn:
+        conn.execute("UPDATE bots SET detected_credentials=? WHERE bot_id=?", (json_text, bot_id))
+
+
+def set_bot_code_path(bot_id: int, code_path: str):
+    with get_conn() as conn:
+        conn.execute("UPDATE bots SET code_path=? WHERE bot_id=?", (code_path, bot_id))
+
+
+def mark_bot_test_clone(bot_id: int):
+    with get_conn() as conn:
+        conn.execute("UPDATE bots SET is_test_clone=1 WHERE bot_id=?", (bot_id,))
 
 
 def delete_bot(bot_id: int):

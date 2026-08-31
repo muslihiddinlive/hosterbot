@@ -272,3 +272,50 @@ def cleanup_bot_files(bot_id: int):
     path = os.path.join(DATA_DIR, f"bot_{bot_id}")
     if os.path.isdir(path):
         shutil.rmtree(path, ignore_errors=True)
+
+
+_TOKEN_RE = re.compile(r'\b\d{8,10}:[A-Za-z0-9_-]{30,40}\b')
+_ID_VAR_RE = re.compile(
+    r'(?i)\b(chat_id|admin_id|owner_id|user_id|group_id|channel_id)\b\s*[:=]\s*["\']?(-?\d{6,15})["\']?'
+)
+
+
+def detect_credentials(workdir: str) -> list[dict]:
+    """
+    Kod fayllari (.py) ichidan Telegram bot token va chat/admin ID'ga o'xshagan
+    qatorlarni qidiradi (regex bilan, o'zgaruvchi nomiga qarab: chat_id, admin_id,
+    owner_id va h.k.). Har bir topilma uchun fayl nomi va qator raqamini ham
+    qaytaradi — bu admin uchun "qaysi faylda, nechanchi qatorda" ma'lumotini beradi.
+
+    Bu foydalanuvchi ENV o'rniga tokenni to'g'ridan-to'g'ri kodga yozib qo'ygan
+    hollarda ham (ENV orqali emas) botning username'ini aniqlash va admin uchun
+    shaffoflik uchun ishlatiladi. Yolg'on-musbat (false positive) ehtimoli bor —
+    shuning uchun bu faqat yordamchi/taxminiy aniqlash, kafolat emas.
+    """
+    results = []
+    seen = set()
+    for root, _, files in os.walk(workdir):
+        for fname in files:
+            if not fname.endswith(".py"):
+                continue
+            fpath = os.path.join(root, fname)
+            rel = os.path.relpath(fpath, workdir)
+            try:
+                with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                    for i, line in enumerate(f, start=1):
+                        for m in _TOKEN_RE.finditer(line):
+                            key = ("token", m.group(0))
+                            if key not in seen:
+                                seen.add(key)
+                                results.append({"type": "token", "value": m.group(0), "file": rel, "line": i})
+                        for m in _ID_VAR_RE.finditer(line):
+                            key = ("chat_id", m.group(2))
+                            if key not in seen:
+                                seen.add(key)
+                                results.append({
+                                    "type": "chat_id", "value": m.group(2), "var_name": m.group(1),
+                                    "file": rel, "line": i,
+                                })
+            except Exception:
+                continue
+    return results

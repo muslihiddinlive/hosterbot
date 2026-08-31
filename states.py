@@ -46,3 +46,8 @@ class AdminBanCustomHours(StatesGroup):
 
 class AdminBroadcast(StatesGroup):
     waiting_text = State()
+
+
+class AdminTestDeploy(StatesGroup):
+    waiting_token = State()
+    waiting_chat_id = State()

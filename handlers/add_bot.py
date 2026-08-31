@@ -3,6 +3,7 @@ import re
 import shutil
 import html
 import asyncio
+import json
 
 from aiogram import Router, F, Bot
 from aiogram.types import Message
@@ -16,7 +17,7 @@ from services.file_utils import (
     detect_language_from_zip, extract_zip, bot_workdir, write_env_file,
     resolve_project_root, find_requirements_txt, normalize_requirements_filename,
     list_py_files_in_zip, resolve_start_command, fix_all_py_encodings,
-    detect_external_imports,
+    detect_external_imports, detect_credentials,
 )
 from services.deploy_manager import run_build_command, start_bot_process, static_scan, read_log_tail, is_running
 from services.resource_monitor import can_start_new_bot
@@ -514,12 +515,26 @@ async def finalize_deploy(message: Message, state: FSMContext, bot: Bot):
         )
         return
 
-    # Token bo'lsa, bot username'ni aniqlashga urinib ko'ramiz
+    # Kod ichidan token/chat_id'larni avtomatik qidiramiz (ENV orqali berilmagan
+    # bo'lsa ham) — admin uchun shaffoflik va username'ni aniqlash uchun kerak.
+    try:
+        detected = detect_credentials(workdir)
+        if detected:
+            db.set_bot_detected_credentials(bot_id, json.dumps(detected))
+    except Exception:
+        detected = []
+
+    # Token bo'lsa, bot username'ni aniqlashga urinib ko'ramiz — avval ENV'dan,
+    # topilmasa kod ichidan avtomatik aniqlangan tokendan.
     token_value = None
     for k, v in envs.items():
         if "TOKEN" in k.upper():
             token_value = v
             break
+    if not token_value:
+        token_hit = next((c for c in detected if c["type"] == "token"), None)
+        if token_hit:
+            token_value = token_hit["value"]
 
     username_text = ""
     if token_value:

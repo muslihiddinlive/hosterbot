@@ -2,6 +2,10 @@ import html
 import time
 import logging
 import asyncio
+import json
+import shutil
+import os
+import re
 from datetime import datetime
 
 from aiogram import Router, F, Bot
@@ -10,9 +14,11 @@ from aiogram.fsm.context import FSMContext
 
 import database as db
 from config import is_admin, is_superadmin, STORAGE_GROUP_ID, ADMIN_IDS, SUPERADMIN_IDS
-from states import AdminMessageUser, AdminSetLimit, AdminStarsSetting, AdminBanCustomHours, AdminBroadcast
+from states import AdminMessageUser, AdminSetLimit, AdminStarsSetting, AdminBanCustomHours, AdminBroadcast, AdminTestDeploy
 from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb, admin_gift_list_kb, admin_self_gift_list_kb, admin_ban_choice_kb, admin_broadcast_confirm_kb, admin_sender_choice_kb
-from services.deploy_manager import stop_bot_process
+from services.deploy_manager import stop_bot_process, start_bot_process, run_build_command, is_running, read_log_tail
+from services.file_utils import bot_workdir
+from services.resource_monitor import can_start_new_bot
 from aiogram.exceptions import TelegramBadRequest
 from services.backup import backup_database
 
@@ -634,6 +640,26 @@ async def cb_admin_bot_view(callback: CallbackQuery):
         f"Owner ID: <code>{bot_row['owner_id']}</code>\n"
         f"Til: {html.escape(bot_row['language'] or '-')}"
     )
+
+    # Admin uchun: kod ichidan avtomatik aniqlangan token/chat_id'lar, fayl+qator bilan
+    if bot_row["detected_credentials"]:
+        try:
+            creds = json.loads(bot_row["detected_credentials"])
+        except Exception:
+            creds = []
+        if creds:
+            text += "\n\n🔍 <b>Kod ichidan aniqlangan (taxminiy):</b>"
+            for c in creds[:15]:
+                if c["type"] == "token":
+                    text += f"\n• Token: <code>{html.escape(c['value'])}</code> — {html.escape(c['file'])}:{c['line']}"
+                else:
+                    text += (
+                        f"\n• {html.escape(c.get('var_name', 'ID'))}: <code>{html.escape(c['value'])}</code> "
+                        f"— {html.escape(c['file'])}:{c['line']}"
+                    )
+            if len(creds) > 15:
+                text += f"\n… va yana {len(creds) - 15} ta"
+
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=admin_bot_view_kb(bot_row))
     await callback.answer()
 
@@ -861,3 +887,178 @@ async def cb_admin_broadcast_confirm(callback: CallbackQuery, state: FSMContext,
     await callback.message.answer(
         f"✅ Broadcast tugadi.\nYuborildi: {sent}\nYuborilmadi (bloklagan/xato): {failed}"
     )
+
+
+@router.callback_query(F.data.startswith("admin_test_deploy:"))
+async def cb_admin_test_deploy_start(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+    bot_id = int(callback.data.split(":")[1])
+    bot_row = db.get_bot(bot_id)
+    if bot_row is None:
+        await callback.answer("Bot topilmadi.", show_alert=True)
+        return
+
+    await state.update_data(test_source_bot_id=bot_id)
+    await state.set_state(AdminTestDeploy.waiting_token)
+    await callback.message.answer(
+        "🧪 <b>Shaxsiy test-deploy</b>\n\n"
+        "Bu bot kodining nusxasini SIZNING o'zingiz nomidan, alohida bot sifatida "
+        "deploy qiladi (asl botga tegmaydi).\n\n"
+        "O'zingizning bot tokeningizni yuboring (@BotFather'dan olingan):",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(AdminTestDeploy.waiting_token)
+async def test_deploy_token_entered(message: Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if not re.match(r'^\d{8,10}:[A-Za-z0-9_-]{35}$', text):
+        await message.answer("Bu to'g'ri token ko'rinishida emas. Qaytadan yuboring (masalan: 123456789:ABC-...).")
+        return
+
+    await state.update_data(test_new_token=text)
+    data = await state.get_data()
+    source_bot_id = data.get("test_source_bot_id")
+    source_row = db.get_bot(source_bot_id)
+
+    creds = []
+    if source_row and source_row["detected_credentials"]:
+        try:
+            creds = json.loads(source_row["detected_credentials"])
+        except Exception:
+            creds = []
+    chat_id_hit = next((c for c in creds if c["type"] == "chat_id"), None)
+
+    if chat_id_hit:
+        await state.set_state(AdminTestDeploy.waiting_chat_id)
+        await message.answer(
+            f"Kodda <code>{html.escape(chat_id_hit.get('var_name', 'ID'))} = {chat_id_hit['value']}</code> "
+            f"topildi ({chat_id_hit['file']}:{chat_id_hit['line']}).\n\n"
+            f"Buni ham almashtirmoqchimisiz? Yangi ID raqamini yuboring, yoki o'zgartirmaslik uchun "
+            f"<code>skip</code> deb yozing.",
+            parse_mode="HTML",
+        )
+        return
+
+    await _finalize_test_deploy(message, state)
+
+
+@router.message(AdminTestDeploy.waiting_chat_id)
+async def test_deploy_chat_id_entered(message: Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if text.lower() != "skip":
+        if not re.match(r'^-?\d{6,15}$', text):
+            await message.answer("Bu ID ko'rinishida emas. Raqam yuboring yoki 'skip' deb yozing.")
+            return
+        await state.update_data(test_new_chat_id=text)
+    await _finalize_test_deploy(message, state)
+
+
+async def _finalize_test_deploy(message: Message, state: FSMContext):
+    data = await state.get_data()
+    source_bot_id = data.get("test_source_bot_id")
+    new_token = data.get("test_new_token")
+    new_chat_id = data.get("test_new_chat_id")
+    await state.clear()
+
+    source_row = db.get_bot(source_bot_id)
+    if source_row is None:
+        await message.answer("Manba bot topilmadi.")
+        return
+
+    allowed, used_mb, budget_mb = can_start_new_bot()
+    if not allowed:
+        await message.answer(f"⚠️ Server RAM byudjeti tugagan ({used_mb:.0f}/{budget_mb} MB). Hozircha test-deploy qilib bo'lmaydi.")
+        return
+
+    await message.answer("🧪 Test-deploy tayyorlanmoqda...")
+
+    try:
+        new_bot_id = db.create_bot(
+            owner_id=message.from_user.id, bot_username=None, bot_token=new_token,
+            code_path=source_row["code_path"],  # vaqtincha, pastda yangilanadi
+            storage_file_id=None, is_zip=bool(source_row["is_zip"]), language=source_row["language"],
+            build_cmd=source_row["build_cmd"], start_cmd=source_row["start_cmd"],
+            display_name=f"{source_row['bot_username'] or source_row['display_name'] or 'bot'} (TEST)",
+        )
+        db.mark_bot_test_clone(new_bot_id)
+
+        new_workdir = bot_workdir(new_bot_id)
+        shutil.copytree(source_row["code_path"], new_workdir, dirs_exist_ok=True)
+        db.set_bot_code_path(new_bot_id, new_workdir)
+
+        # Aniqlangan eski token/chat_id'larni yangilari bilan almashtiramiz (matn almashtirish)
+        creds = []
+        if source_row["detected_credentials"]:
+            try:
+                creds = json.loads(source_row["detected_credentials"])
+            except Exception:
+                creds = []
+        replacements = {}
+        old_token_hit = next((c for c in creds if c["type"] == "token"), None)
+        if old_token_hit:
+            replacements[old_token_hit["value"]] = new_token
+        if new_chat_id:
+            old_chat_hit = next((c for c in creds if c["type"] == "chat_id"), None)
+            if old_chat_hit:
+                replacements[old_chat_hit["value"]] = new_chat_id
+
+        for root, _, files in os.walk(new_workdir):
+            for fname in files:
+                if not fname.endswith(".py"):
+                    continue
+                fpath = os.path.join(root, fname)
+                try:
+                    with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read()
+                    changed = False
+                    for old_val, new_val in replacements.items():
+                        if old_val in content:
+                            content = content.replace(old_val, new_val)
+                            changed = True
+                    if changed:
+                        with open(fpath, "w", encoding="utf-8") as f:
+                            f.write(content)
+                except Exception:
+                    continue
+
+        log_file = open(os.path.join(new_workdir, "run.log"), "w", encoding="utf-8")
+        build_ok = run_build_command(new_workdir, source_row["build_cmd"] or "", log_file)
+        log_file.close()
+        if not build_ok:
+            db.set_bot_status(new_bot_id, "crashed", None)
+            crash_log = read_log_tail(new_workdir, n_lines=40)
+            await message.answer(f"❌ Build muvaffaqiyatsiz:\n<pre>{html.escape(crash_log[-2500:])}</pre>", parse_mode="HTML")
+            return
+
+        pid = start_bot_process(new_bot_id, new_workdir, source_row["start_cmd"], {})
+        db.set_bot_status(new_bot_id, "running", pid)
+        await asyncio.sleep(3)
+        if not is_running(new_bot_id):
+            db.set_bot_status(new_bot_id, "crashed", None)
+            crash_log = read_log_tail(new_workdir, n_lines=40)
+            await message.answer(f"❌ Ishga tushgach qulab tushdi:\n<pre>{html.escape(crash_log[-2500:])}</pre>", parse_mode="HTML")
+            return
+
+        try:
+            temp_bot = Bot(token=new_token)
+            me = await temp_bot.get_me()
+            db.set_bot_username(new_bot_id, me.username)
+            await temp_bot.session.close()
+            username_text = f"\n🤖 @{me.username}"
+        except Exception:
+            username_text = ""
+
+        await message.answer(
+            f"✅ <b>Test-deploy tayyor va ishlab turibdi!</b>{username_text}\n\n"
+            f"Bu asl botdan mustaqil nusxa — \"Mening botlarim\"dan boshqarasiz. "
+            f"Diqqat: bu nusxa Render qayta ko'tarilganda avtomatik tiklanmaydi "
+            f"(faqat test uchun, doimiy backup mexanizmiga ulanmagan).",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        log.exception("Test-deploy xatoligi")
+        await message.answer(f"Xato: {str(e)[:300]}")
