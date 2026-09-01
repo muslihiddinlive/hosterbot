@@ -12,7 +12,7 @@ import database as db
 from config import is_admin
 from states import ConfirmDelete
 from keyboards import bot_manage_kb, admin_bot_view_kb, cancel_kb, main_menu_kb
-from services.deploy_manager import start_bot_process, stop_bot_process, read_log_tail, is_running
+from services.deploy_manager import start_bot_process, stop_bot_process, read_log_tail, is_running, format_log_block
 from services.resource_monitor import can_start_new_bot, bot_ram_mb
 from services.file_utils import (
     cleanup_bot_files, write_env_file, extract_zip, resolve_project_root,
@@ -101,9 +101,10 @@ async def cb_bot_start(callback: CallbackQuery, bot: Bot):
         return
 
     await callback.answer("Tekshirilmoqda...")
+    bot_label = f"@{bot_row['bot_username']}" if bot_row["bot_username"] else (bot_row["display_name"] or f"Bot #{bot_id}")
     ok, err = await _ensure_code_present(bot, bot_row)
     if not ok:
-        await callback.message.answer(f"⚠️ Ishga tushirib bo'lmadi:\n<code>{html.escape(err)}</code>", parse_mode="HTML")
+        await callback.message.answer(format_log_block(f"⚠️ {bot_label} — ishga tushirib bo'lmadi", err), parse_mode="HTML")
         return
     bot_row = db.get_bot(bot_id)  # code_path o'zgargan bo'lishi mumkin
 
@@ -112,7 +113,7 @@ async def cb_bot_start(callback: CallbackQuery, bot: Bot):
         pid = start_bot_process(bot_id, bot_row["code_path"], bot_row["start_cmd"], envs)
     except Exception as e:
         log.exception("start_bot_process xatoligi")
-        await callback.message.answer(f"⚠️ Ishga tushirib bo'lmadi:\n<code>{html.escape(str(e))}</code>", parse_mode="HTML")
+        await callback.message.answer(format_log_block(f"⚠️ {bot_label} — ishga tushirib bo'lmadi", str(e)), parse_mode="HTML")
         return
     db.set_bot_status(bot_id, "running", pid)
     bot_row = db.get_bot(bot_id)
@@ -275,8 +276,9 @@ async def cb_bot_live_log(callback: CallbackQuery):
         return
 
     await callback.answer()
-    label = bot_row["bot_username"] or bot_row["display_name"] or f"Bot #{bot_id}"
-    msg = await callback.message.answer(f"📡 <b>{html.escape(label)}</b> — live log (30 soniya yangilanadi)...", parse_mode="HTML")
+    username = bot_row["bot_username"]
+    label = f"@{username}" if username else (bot_row["display_name"] or f"Bot #{bot_id}")
+    msg = await callback.message.answer(f"📡 {html.escape(label)} — live log (30 soniya yangilanadi)...")
 
     last_text = None
     # Render Free Tier'da CPU/RAM cheklangani uchun live log CHEKSIZ emas —
@@ -289,7 +291,7 @@ async def cb_bot_live_log(callback: CallbackQuery):
             break
         logs = read_log_tail(current_row["code_path"], n_lines=25)
         status_icon = "🟢" if is_running(bot_id) else "🔴"
-        text = f"📡 <b>{html.escape(label)}</b> {status_icon}\n\n<pre>{html.escape(logs[-2500:])}</pre>"
+        text = format_log_block(f"{label} {status_icon}", logs)
         if text != last_text:
             try:
                 await msg.edit_text(text, parse_mode="HTML")

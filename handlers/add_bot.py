@@ -19,7 +19,7 @@ from services.file_utils import (
     list_py_files_in_zip, resolve_start_command, fix_all_py_encodings,
     detect_external_imports, detect_credentials,
 )
-from services.deploy_manager import run_build_command, start_bot_process, static_scan, read_log_tail, is_running
+from services.deploy_manager import run_build_command, start_bot_process, static_scan, read_log_tail, is_running, format_log_block
 from services.resource_monitor import can_start_new_bot
 from services.backup import backup_database
 from handlers.stars import format_remaining
@@ -448,8 +448,10 @@ async def finalize_deploy(message: Message, state: FSMContext, bot: Bot):
         db.set_bot_status(bot_id, "crashed")
         await backup_database(bot)
         error_tail = read_log_tail(workdir, n_lines=40)
+        bot_row_now = db.get_bot(bot_id)
+        label = f"@{bot_row_now['bot_username']}" if bot_row_now["bot_username"] else (bot_row_now["display_name"] or f"Bot #{bot_id}")
         await message.answer(
-            f"❌ <b>Build bosqichida xatolik yuz berdi:</b>\n\n<pre>{html.escape(error_tail[-3500:])}</pre>",
+            format_log_block(f"❌ {label} — build bosqichida xatolik", error_tail),
             parse_mode="HTML",
         )
         return
@@ -509,8 +511,10 @@ async def finalize_deploy(message: Message, state: FSMContext, bot: Bot):
         db.set_bot_status(bot_id, "crashed", None)
         crash_log = read_log_tail(workdir, n_lines=40)
         await backup_database(bot)
+        bot_row_now = db.get_bot(bot_id)
+        label = f"@{bot_row_now['bot_username']}" if bot_row_now["bot_username"] else (bot_row_now["display_name"] or f"Bot #{bot_id}")
         await message.answer(
-            f"❌ <b>Bot ishga tushirilgach, darhol qulab tushdi:</b>\n\n<pre>{html.escape(crash_log[-3500:])}</pre>",
+            format_log_block(f"❌ {label} — ishga tushirilgach darhol qulab tushdi", crash_log),
             parse_mode="HTML",
         )
         return

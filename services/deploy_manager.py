@@ -12,6 +12,7 @@ Agar keyinchalik foydalanuvchilar soni oshsa — Docker/Firecracker asosidagi
 to'liq isolation'ga o'tish tavsiya etiladi.
 """
 import os
+import html
 import resource
 import subprocess
 import signal
@@ -245,3 +246,16 @@ def read_log_tail(workdir: str, n_lines: int = 60) -> str:
     with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
         lines = f.readlines()
     return "".join(lines[-n_lines:]) or "Log bo'sh."
+
+
+def format_log_block(label: str, content: str, max_chars: int = 3500) -> str:
+    """
+    Bot nomi (@username yoki nom) va log/xato matnini BITTA yaxlit <pre> blokiga
+    joylaydi — shunda foydalanuvchi ustiga bosib turib, bot nomi bilan birga
+    log matnini ham to'liq, formatlanmagan (copyable) holda nusxalab oladi.
+    Ikkalasi ham shu yerda escape qilinadi — chaqiruvchi tomonda qayta
+    html.escape() qilish SHART EMAS (ikki marta escape bo'lib qolmasin).
+    """
+    label_esc = html.escape(label)
+    content_esc = html.escape(content[-max_chars:])
+    return f"<pre>{label_esc}\n\n{content_esc}</pre>"

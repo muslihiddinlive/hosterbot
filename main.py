@@ -14,7 +14,7 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 from config import BOT_TOKEN, WEBHOOK_BASE_URL, WEBHOOK_PATH, PORT
 import database as db
 from services.backup import restore_database, backup_database
-from services.deploy_manager import is_running, read_log_tail, run_build_command, start_bot_process, stop_bot_process
+from services.deploy_manager import is_running, read_log_tail, run_build_command, start_bot_process, stop_bot_process, format_log_block
 from services.file_utils import (
     bot_workdir, extract_zip, resolve_project_root,
     normalize_requirements_filename, fix_all_py_encodings,
@@ -171,13 +171,13 @@ async def crash_watchdog():
                     continue
 
                 db.set_bot_status(bot_row["bot_id"], "crashed", None)
-                label = bot_row["bot_username"] or bot_row["display_name"] or f"Bot #{bot_row['bot_id']}"
+                username = bot_row["bot_username"]
+                label = f"@{username}" if username else (bot_row["display_name"] or f"Bot #{bot_row['bot_id']}")
                 crash_log = read_log_tail(bot_row["code_path"], n_lines=30)
                 try:
                     await bot.send_message(
                         bot_row["owner_id"],
-                        f"⚠️ <b>{html.escape(label)}</b> kutilmaganda to'xtab qoldi.\n\n"
-                        f"<b>So'nggi loglar:</b>\n<pre>{html.escape(crash_log[-2500:])}</pre>",
+                        format_log_block(f"⚠️ {label} kutilmaganda to'xtab qoldi", crash_log),
                         parse_mode="HTML",
                         reply_markup=crash_notify_kb(bot_row["bot_id"]),
                     )
