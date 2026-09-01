@@ -1024,7 +1024,7 @@ async def _finalize_test_deploy(message: Message, state: FSMContext):
         db.mark_bot_test_clone(new_bot_id)
 
         new_workdir = bot_workdir(new_bot_id)
-        shutil.copytree(source_row["code_path"], new_workdir, dirs_exist_ok=True)
+        await asyncio.to_thread(shutil.copytree, source_row["code_path"], new_workdir, dirs_exist_ok=True)
         db.set_bot_code_path(new_bot_id, new_workdir)
 
         # Aniqlangan eski token/chat_id'larni yangilari bilan almashtiramiz (matn almashtirish)
@@ -1063,7 +1063,7 @@ async def _finalize_test_deploy(message: Message, state: FSMContext):
                     continue
 
         log_file = open(os.path.join(new_workdir, "run.log"), "w", encoding="utf-8")
-        build_ok = run_build_command(new_workdir, source_row["build_cmd"] or "", log_file)
+        build_ok = await asyncio.to_thread(run_build_command, new_workdir, source_row["build_cmd"] or "", log_file)
         log_file.close()
         if not build_ok:
             db.set_bot_status(new_bot_id, "crashed", None)

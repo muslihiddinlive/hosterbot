@@ -442,7 +442,7 @@ async def finalize_deploy(message: Message, state: FSMContext, bot: Bot):
 
     log_path = os.path.join(workdir, "run.log")
     with open(log_path, "w", encoding="utf-8") as log_file:
-        build_ok = run_build_command(workdir, build_cmd, log_file)
+        build_ok = await asyncio.to_thread(run_build_command, workdir, build_cmd, log_file)
 
     if not build_ok:
         db.set_bot_status(bot_id, "crashed")
