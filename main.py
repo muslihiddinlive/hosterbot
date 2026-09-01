@@ -51,13 +51,19 @@ async def global_error_handler(event: ErrorEvent):
     """
     log.exception(f"Ushlanmagan xato: {event.exception}")
     update = event.update
+    err_text = html.escape(str(event.exception))[:500]
     try:
         if update.callback_query:
-            await update.callback_query.answer(
-                f"⚠️ Kutilmagan xato: {str(event.exception)[:150]}", show_alert=True,
-            )
+            # Alert (show_alert) matnini ko'chirib bo'lmaydi — shu sabab haqiqiy
+            # chat xabari yuboramiz (<code> bilan, tap-and-hold orqali nusxalash
+            # mumkin bo'lsin deb), alertni esa faqat qisqa bildirishnoma sifatida.
+            await update.callback_query.answer("⚠️ Xato yuz berdi, tafsilotlar pastda.", show_alert=False)
+            if update.callback_query.message:
+                await update.callback_query.message.answer(
+                    f"⚠️ <b>Kutilmagan xato:</b>\n<code>{err_text}</code>", parse_mode="HTML",
+                )
         elif update.message:
-            await update.message.answer(f"⚠️ Kutilmagan xato: {str(event.exception)[:300]}")
+            await update.message.answer(f"⚠️ <b>Kutilmagan xato:</b>\n<code>{err_text}</code>", parse_mode="HTML")
     except Exception:
         pass
     return True

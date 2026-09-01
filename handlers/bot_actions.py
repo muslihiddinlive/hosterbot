@@ -1,6 +1,7 @@
 import html
 import logging
 import os
+import re
 import asyncio
 
 from aiogram import Router, F, Bot
@@ -13,7 +14,10 @@ from states import ConfirmDelete
 from keyboards import bot_manage_kb, admin_bot_view_kb, cancel_kb, main_menu_kb
 from services.deploy_manager import start_bot_process, stop_bot_process, read_log_tail, is_running
 from services.resource_monitor import can_start_new_bot, bot_ram_mb
-from services.file_utils import cleanup_bot_files, write_env_file
+from services.file_utils import (
+    cleanup_bot_files, write_env_file, extract_zip, resolve_project_root,
+    normalize_requirements_filename, fix_all_py_encodings,
+)
 from services.backup import backup_database
 
 router = Router()
@@ -28,6 +32,51 @@ def _refresh_kb(bot_row, callback: CallbackQuery):
     if is_admin(callback.from_user.id) and bot_row["owner_id"] != callback.from_user.id:
         return admin_bot_view_kb(bot_row)
     return bot_manage_kb(bot_row)
+
+
+async def _ensure_code_present(bot: Bot, bot_row) -> tuple[bool, str]:
+    """
+    Render qayta ko'tarilganda faqat 'running' holatdagi botlar avtomatik
+    tiklanadi (main.py restore_running_bots) — 'crashed'/'stopped' holatda
+    qolgan botlar ephemeral diskdan yo'qolgan bo'lishi mumkin. Shu sabab qo'lda
+    "Qayta ishga tushirish" bosilganda ham, kod bor-yo'qligini tekshirib,
+    kerak bo'lsa Telegram storage guruhidan qayta tiklaymiz — aks holda
+    start_bot_process run.log ochishda "No such file or directory" xatosi bilan
+    qulab tushar edi.
+
+    Qaytaradi: (muvaffaqiyatmi, xato_matni_yoki_bosh)
+    """
+    workdir = bot_row["code_path"]
+    code_present = os.path.isdir(workdir) and any(
+        f.endswith(".py") for _, _, files in os.walk(workdir) for f in files
+    )
+    if code_present:
+        return True, ""
+
+    if not bot_row["storage_file_id"]:
+        return False, "Bot kodi diskdan yo'qolgan va tiklash uchun zaxira (storage_file_id) topilmadi."
+
+    try:
+        os.makedirs(workdir, exist_ok=True)
+        tmp_path = os.path.join(workdir, "_restore_download")
+        await bot.download(bot_row["storage_file_id"], destination=tmp_path)
+        if bot_row["is_zip"]:
+            extract_zip(tmp_path, workdir)
+            os.remove(tmp_path)
+            new_workdir = resolve_project_root(workdir)
+            if new_workdir != workdir:
+                db.set_bot_code_path(bot_row["bot_id"], new_workdir)
+                workdir = new_workdir
+        else:
+            match = re.search(r'([^\s"\']+\.py)', bot_row["start_cmd"] or "")
+            py_name = os.path.basename(match.group(1)) if match else "main.py"
+            os.replace(tmp_path, os.path.join(workdir, py_name))
+        normalize_requirements_filename(workdir)
+        fix_all_py_encodings(workdir)
+        return True, ""
+    except Exception as e:
+        log.exception("Kodni tiklashda xato")
+        return False, f"Kodni tiklashda xato: {e}"
 
 
 @router.callback_query(F.data.startswith("bot_start:"))
@@ -51,8 +100,20 @@ async def cb_bot_start(callback: CallbackQuery, bot: Bot):
         )
         return
 
+    await callback.answer("Tekshirilmoqda...")
+    ok, err = await _ensure_code_present(bot, bot_row)
+    if not ok:
+        await callback.message.answer(f"⚠️ Ishga tushirib bo'lmadi:\n<code>{html.escape(err)}</code>", parse_mode="HTML")
+        return
+    bot_row = db.get_bot(bot_id)  # code_path o'zgargan bo'lishi mumkin
+
     envs = {row["key"]: row["value"] for row in db.list_envs(bot_id)}
-    pid = start_bot_process(bot_id, bot_row["code_path"], bot_row["start_cmd"], envs)
+    try:
+        pid = start_bot_process(bot_id, bot_row["code_path"], bot_row["start_cmd"], envs)
+    except Exception as e:
+        log.exception("start_bot_process xatoligi")
+        await callback.message.answer(f"⚠️ Ishga tushirib bo'lmadi:\n<code>{html.escape(str(e))}</code>", parse_mode="HTML")
+        return
     db.set_bot_status(bot_id, "running", pid)
     bot_row = db.get_bot(bot_id)
 
@@ -61,7 +122,6 @@ async def cb_bot_start(callback: CallbackQuery, bot: Bot):
         parse_mode="HTML", reply_markup=_refresh_kb(bot_row, callback),
     )
     await backup_database(bot)
-    await callback.answer("Bot ishga tushirildi ✅")
 
 
 @router.callback_query(F.data.startswith("bot_stop:"))
