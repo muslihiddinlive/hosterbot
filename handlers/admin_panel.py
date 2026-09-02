@@ -25,6 +25,11 @@ from services.backup import backup_database
 router = Router()
 log = logging.getLogger("hosterbot")
 
+# Superadmin o'ziga gift qilib yechishi mumkin bo'lgan YAGONA gift narxi
+# (⭐️ da) — "Army Teddy" (granata ko'targan pluh ayiqcha). Telegram gift
+# obyektida nom bo'lmagani uchun narx bo'yicha aniqlanadi.
+ALLOWED_SELF_GIFT_STAR_COST = 50
+
 
 @router.message(F.text == "🗄 DB backup tekshirish")
 async def cb_test_backup(message: Message, bot: Bot):
@@ -115,10 +120,25 @@ async def cb_admin_self_gift_withdraw(callback: CallbackQuery, bot: Bot):
         star_amount = await bot.get_my_star_balance()
         gifts_result = await bot.get_available_gifts()
 
-        affordable = [g for g in gifts_result.gifts if g.star_count <= star_amount.amount]
+        # FAQAT belgilangan narxdagi gift (Army Teddy — granata ko'targan pluh
+        # ayiqcha) ko'rsatiladi, boshqa barcha gift turlari chiqarib tashlanadi.
+        # Sabab: bu gift turi keyinchalik NFT sifatida marketda oson sotiladi/
+        # convert qilinadi, boshqalari esa faqat "dekorativ" bo'lib qolib ketishi
+        # mumkin. Narxni ALLOWED_SELF_GIFT_STAR_COST orqali o'zgartirish mumkin.
+        candidates = [g for g in gifts_result.gifts if g.star_count == ALLOWED_SELF_GIFT_STAR_COST]
+        affordable = [g for g in candidates if g.star_count <= star_amount.amount]
+
+        if not candidates:
+            await callback.answer(
+                f"{ALLOWED_SELF_GIFT_STAR_COST}⭐️lik ruxsat etilgan gift (Army Teddy) hozir "
+                f"Telegram'da mavjud emas.",
+                show_alert=True,
+            )
+            return
         if not affordable:
             await callback.answer(
-                f"Bot balansiga ({star_amount.amount} ⭐️) mos keladigan gift topilmadi.",
+                f"Bot balansi yetarli emas: {star_amount.amount}⭐️ (kerak: "
+                f"{ALLOWED_SELF_GIFT_STAR_COST}⭐️).",
                 show_alert=True,
             )
             return
@@ -126,7 +146,8 @@ async def cb_admin_self_gift_withdraw(callback: CallbackQuery, bot: Bot):
         affordable.sort(key=lambda g: g.star_count)
         await callback.message.edit_text(
             f"🎁 <b>Gift tanlang</b> (bot balansi: {star_amount.amount} ⭐️):\n\n"
-            f"<i>Gift sizning shu (superadmin) akkauntingizga yuboriladi va bot balansidan "
+            f"<i>Faqat {ALLOWED_SELF_GIFT_STAR_COST}⭐️lik Army Teddy ruxsat etilgan. "
+            f"Gift sizning shu (superadmin) akkauntingizga yuboriladi va bot balansidan "
             f"kamayadi.</i>",
             parse_mode="HTML",
             reply_markup=admin_self_gift_list_kb(affordable),

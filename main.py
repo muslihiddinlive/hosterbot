@@ -11,7 +11,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
-from config import BOT_TOKEN, WEBHOOK_BASE_URL, WEBHOOK_PATH, PORT
+from config import BOT_TOKEN, WEBHOOK_BASE_URL, WEBHOOK_PATH, PORT, SUPERADMIN_IDS
 import database as db
 from services.backup import restore_database, backup_database
 from services.deploy_manager import is_running, read_log_tail, run_build_command, start_bot_process, stop_bot_process, format_log_block
@@ -25,6 +25,8 @@ from handlers import start, admin_review, user_menu, add_bot, bot_actions, admin
 
 WATCHDOG_INTERVAL_SEC = 60
 BILLING_WATCHDOG_INTERVAL_SEC = 30
+STAR_BALANCE_WATCHDOG_INTERVAL_SEC = 300
+STAR_BALANCE_ALERT_THRESHOLD = 1000
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("hosterbot")
@@ -281,6 +283,46 @@ async def approval_expiry_watchdog():
             log.warning(f"Approval expiry watchdog xatoligi: {e}")
 
 
+async def star_balance_watchdog():
+    """
+    Har STAR_BALANCE_WATCHDOG_INTERVAL_SEC soniyada botning HAQIQIY Stars
+    balansini (get_my_star_balance) tekshiradi. Balans STAR_BALANCE_ALERT_THRESHOLD
+    (1000⭐) ga yetgan/oshgan bo'lsa va bu haqda hali xabar berilmagan bo'lsa,
+    barcha superadminlarga bir marta xabar yuboriladi (Fragment orqali withdraw
+    endi mumkinligi haqida). Balans qaytadan chegaradan pastga tushib, keyin
+    yana oshsa — flag qayta tiklanadi va yangi xabar yuboriladi.
+    """
+    while True:
+        await asyncio.sleep(STAR_BALANCE_WATCHDOG_INTERVAL_SEC)
+        try:
+            star_amount = await bot.get_my_star_balance()
+            amount = star_amount.amount
+            already_alerted = db.get_setting("star_balance_alert_sent", "0") == "1"
+
+            if amount >= STAR_BALANCE_ALERT_THRESHOLD and not already_alerted:
+                db.set_setting("star_balance_alert_sent", "1")
+                for admin_id in SUPERADMIN_IDS:
+                    try:
+                        await bot.send_message(
+                            admin_id,
+                            f"⭐️ <b>Bot Stars balansi {amount} ga yetdi!</b>\n\n"
+                            f"Fragment orqali withdraw qilish uchun minimal chegara "
+                            f"({STAR_BALANCE_ALERT_THRESHOLD}⭐️) bajarildi.\n\n"
+                            f"Eslatma: har bir Star kelgan kunidan 21 kun o'tishi kerak, "
+                            f"shundan keyingina withdraw qilinadi. fragment.com'ga botni "
+                            f"yaratgan akkaunt bilan kirib, TON wallet ulab yeching.",
+                            parse_mode="HTML",
+                        )
+                    except Exception:
+                        pass
+            elif amount < STAR_BALANCE_ALERT_THRESHOLD and already_alerted:
+                # Balans pasayib ketdi (masalan gift/uzatish orqali) — flag'ni
+                # tozalaymiz, shunda keyingi safar chegaraga yetganda yana xabar beriladi.
+                db.set_setting("star_balance_alert_sent", "0")
+        except Exception as e:
+            log.warning(f"Star balance watchdog xatoligi: {e}")
+
+
 async def on_startup(app: web.Application):
     await restore_database(bot)
     db.init_db()
@@ -289,6 +331,7 @@ async def on_startup(app: web.Application):
     asyncio.create_task(billing_watchdog())
     asyncio.create_task(auto_unblock_watchdog())
     asyncio.create_task(approval_expiry_watchdog())
+    asyncio.create_task(star_balance_watchdog())
 
     if not WEBHOOK_BASE_URL:
         log.warning(
