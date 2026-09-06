@@ -60,8 +60,10 @@ class AdminSearchUser(StatesGroup):
 
 class AdminAIProvider(StatesGroup):
     """Superadmin — AI provider (Cloudflare Workers AI, OpenRouter, va h.k.) qo'shish/tahrirlash."""
+    waiting_kind = State()          # "cloudflare" yoki "custom" — qaysi savollar ketma-ketligi ishlatilishini belgilaydi
     waiting_name = State()
-    waiting_base_url = State()
+    waiting_base_url = State()      # faqat "custom" yo'lida ishlatiladi
+    waiting_account_id = State()    # faqat "cloudflare" yo'lida ishlatiladi — URL avtomatik yasaladi
     waiting_api_key = State()
     waiting_model = State()
     waiting_daily_limit = State()

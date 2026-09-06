@@ -125,6 +125,30 @@ def admin_ai_provider_view_kb(provider) -> InlineKeyboardMarkup:
     ])
 
 
+def admin_ai_provider_kind_kb() -> InlineKeyboardMarkup:
+    """AI provayder qo'shishning birinchi qadami — Cloudflare uchun soddalashtirilgan
+    oqim (faqat Account ID so'raladi, URL avtomatik yasaladi) yoki boshqa har qanday
+    OpenAI-compatible xizmat uchun to'liq URL so'raladigan oqim."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="☁️ Cloudflare Workers AI", callback_data="admin_ai_kind:cloudflare")],
+        [InlineKeyboardButton(text="🔧 Boshqa (custom URL)", callback_data="admin_ai_kind:custom")],
+    ])
+
+
+CLOUDFLARE_CODER_MODELS = [
+    ("Qwen2.5-Coder 32B (bepul limitga kiradi, tavsiya)", "@cf/qwen/qwen2.5-coder-32b-instruct"),
+    ("Kimi K2.7 Code (kuchliroq, faqat Paid plan)", "@cf/moonshotai/kimi-k2.7-code"),
+    ("GLM-5.3 (kuchli, faqat Paid plan)", "@cf/zai-org/glm-5.3"),
+]
+
+
+def admin_ai_cloudflare_model_kb() -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text=label, callback_data=f"admin_ai_cf_model:{model}")]
+            for label, model in CLOUDFLARE_CODER_MODELS]
+    rows.append([InlineKeyboardButton(text="✏️ Boshqa model nomi yozaman", callback_data="admin_ai_cf_model:custom")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def admin_review_kb(request_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [

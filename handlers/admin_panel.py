@@ -15,7 +15,7 @@ from aiogram.fsm.context import FSMContext
 import database as db
 from config import is_admin, is_superadmin, STORAGE_GROUP_ID, ADMIN_IDS, SUPERADMIN_IDS
 from states import AdminMessageUser, AdminSetLimit, AdminStarsSetting, AdminBanCustomHours, AdminBroadcast, AdminTestDeploy, AdminSearchUser, AdminAIProvider
-from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb, admin_gift_list_kb, admin_self_gift_list_kb, admin_ban_choice_kb, admin_broadcast_confirm_kb, admin_sender_choice_kb, admin_ai_providers_kb, admin_ai_provider_view_kb
+from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb, admin_gift_list_kb, admin_self_gift_list_kb, admin_ban_choice_kb, admin_broadcast_confirm_kb, admin_sender_choice_kb, admin_ai_providers_kb, admin_ai_provider_view_kb, admin_ai_provider_kind_kb, admin_ai_cloudflare_model_kb
 from services.deploy_manager import stop_bot_process, start_bot_process, run_build_command, is_running, read_log_tail
 from services.file_utils import bot_workdir
 from services.resource_monitor import can_start_new_bot
@@ -1234,11 +1234,33 @@ async def cb_admin_ai_provider_add(callback: CallbackQuery, state: FSMContext):
     if not is_superadmin(callback.from_user.id):
         await callback.answer("Bu faqat superadminlar uchun.", show_alert=True)
         return
-    await state.set_state(AdminAIProvider.waiting_name)
+    await state.set_state(AdminAIProvider.waiting_kind)
     await callback.message.answer(
-        "🤖 Yangi AI provayder qo'shish.\n\nProvayder nomini yozing (masalan: <code>Cloudflare Workers AI</code>):",
-        parse_mode="HTML",
+        "🤖 Yangi AI provayder qo'shish.\n\n"
+        "Cloudflare Workers AI bo'lsa, faqat Account ID va API kalit yetarli — "
+        "endpoint manzilini o'zim yasab beraman. Boshqa xizmat (OpenRouter, Groq va h.k.) "
+        "bo'lsa, to'liq endpoint URL kerak bo'ladi.",
+        reply_markup=admin_ai_provider_kind_kb(),
     )
+    await callback.answer()
+
+
+@router.callback_query(AdminAIProvider.waiting_kind, F.data.startswith("admin_ai_kind:"))
+async def ai_provider_kind_chosen(callback: CallbackQuery, state: FSMContext):
+    kind = callback.data.split(":", 1)[1]
+    await state.update_data(ai_kind=kind)
+    default_name = "Cloudflare Workers AI" if kind == "cloudflare" else ""
+    await state.update_data(ai_name=default_name)
+    await state.set_state(AdminAIProvider.waiting_name)
+
+    if kind == "cloudflare":
+        await callback.message.answer(
+            f"Nom sifatida <b>{default_name}</b> ishlatilsin, yoki o'zingiz nom yozing "
+            f"(masalan agar bir nechta Cloudflare hisobingiz bo'lsa, ularni farqlash uchun):",
+            parse_mode="HTML",
+        )
+    else:
+        await callback.message.answer("Provayder nomini yozing (masalan: <code>OpenRouter</code>):", parse_mode="HTML")
     await callback.answer()
 
 
@@ -1249,10 +1271,39 @@ async def ai_provider_name_entered(message: Message, state: FSMContext):
         await message.answer("Nom bo'sh bo'lishi mumkin emas.")
         return
     await state.update_data(ai_name=name)
-    await state.set_state(AdminAIProvider.waiting_base_url)
+    data = await state.get_data()
+
+    if data.get("ai_kind") == "cloudflare":
+        await state.set_state(AdminAIProvider.waiting_account_id)
+        await message.answer(
+            "☁️ Cloudflare <b>Account ID</b>'ni yuboring.\n\n"
+            "Qayerdan olish mumkin: dash.cloudflare.com → istalgan sayt yoki "
+            "\"Workers &amp; Pages\" bo'limi → o'ng tarafdagi panelda \"Account ID\" "
+            "sifatida ko'rinadi (32 belgili kod, masalan: <code>a1b2c3d4e5f6...</code>).",
+            parse_mode="HTML",
+        )
+    else:
+        await state.set_state(AdminAIProvider.waiting_base_url)
+        await message.answer(
+            "Endpoint URL'ni yozing (OpenAI-compatible, <code>/chat/completions</code>gacha, masalan:\n"
+            "<code>https://openrouter.ai/api/v1</code>):",
+            parse_mode="HTML",
+        )
+
+
+@router.message(AdminAIProvider.waiting_account_id)
+async def ai_provider_account_id_entered(message: Message, state: FSMContext):
+    account_id = (message.text or "").strip()
+    if not account_id or " " in account_id:
+        await message.answer("To'g'ri Account ID yuboring (bo'sh joysiz, bitta so'z sifatida).")
+        return
+    base_url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1"
+    await state.update_data(ai_base_url=base_url)
+    await state.set_state(AdminAIProvider.waiting_api_key)
     await message.answer(
-        "Endpoint URL'ni yozing (OpenAI-compatible, <code>/chat/completions</code>gacha, masalan:\n"
-        "<code>https://api.cloudflare.com/client/v4/accounts/YOUR_ACCOUNT_ID/ai/v1</code>):",
+        f"✅ Endpoint tayyor: <code>{html.escape(base_url)}</code>\n\n"
+        f"Endi API kalitni yuboring — bu dash.cloudflare.com → My Profile → API Tokens → "
+        f"\"Create Token\" → \"Workers AI\" shablonidan olinadi (bazada shifrlangan holda saqlanadi):",
         parse_mode="HTML",
     )
 
@@ -1276,11 +1327,37 @@ async def ai_provider_url_entered(message: Message, state: FSMContext):
 async def ai_provider_key_entered(message: Message, state: FSMContext):
     key = (message.text or "").strip()
     await state.update_data(ai_api_key=None if key == "-" else key)
-    await state.set_state(AdminAIProvider.waiting_model)
-    await message.answer(
-        "Model nomini yozing (masalan: <code>@cf/qwen/qwen2.5-coder-32b-instruct</code>):",
-        parse_mode="HTML",
+    data = await state.get_data()
+
+    if data.get("ai_kind") == "cloudflare":
+        await state.set_state(AdminAIProvider.waiting_model)
+        await message.answer(
+            "Endi model tanlang (kodlash uchun mos variantlar tayyorlab qo'ydim):",
+            reply_markup=admin_ai_cloudflare_model_kb(),
+        )
+    else:
+        await state.set_state(AdminAIProvider.waiting_model)
+        await message.answer(
+            "Model nomini yozing (masalan: <code>gpt-4o-mini</code> yoki xizmatingiz taqdim etgan model ID'si):",
+            parse_mode="HTML",
+        )
+
+
+@router.callback_query(AdminAIProvider.waiting_model, F.data.startswith("admin_ai_cf_model:"))
+async def ai_provider_cf_model_chosen(callback: CallbackQuery, state: FSMContext):
+    model = callback.data.split(":", 1)[1]
+    if model == "custom":
+        await callback.message.answer("Model nomini o'zingiz yozing (masalan: <code>@cf/...</code>):", parse_mode="HTML")
+        await callback.answer()
+        return  # AdminAIProvider.waiting_model holatida qolamiz — matn handler'i kutadi
+
+    await state.update_data(ai_model=model)
+    await state.set_state(AdminAIProvider.waiting_daily_limit)
+    await callback.message.answer(
+        "Kunlik so'rov limiti nechta bo'lsin? (0 = cheklovsiz — Cloudflare dashboard'idagi "
+        "haqiqiy Neuron sarfingizga qarab belgilang, masalan: 30):"
     )
+    await callback.answer()
 
 
 @router.message(AdminAIProvider.waiting_model)

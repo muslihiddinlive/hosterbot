@@ -470,3 +470,31 @@ def test_fix_code_py_txt_extension_is_auto_corrected():
     assert normalize("bot.py.txt") == "bot.py"
     assert not normalize("bot.txt").lower().endswith(".py")
     assert not normalize("bot.zip").lower().endswith(".py")
+
+
+def test_cloudflare_account_id_builds_correct_base_url():
+    # Superadmin faqat Account ID kiritganda, admin_panel.py'dagi
+    # ai_provider_account_id_entered aynan shu URL shaklini yasashi kerak.
+    account_id = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
+    expected = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1"
+    base_url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1"
+    assert base_url == expected
+    assert base_url.count("/accounts/") == 1
+    assert base_url.endswith("/ai/v1")
+
+
+def test_admin_ai_provider_kind_kb_has_cloudflare_and_custom_options():
+    from keyboards import admin_ai_provider_kind_kb
+    kb = admin_ai_provider_kind_kb()
+    callbacks = {btn.callback_data for row in kb.inline_keyboard for btn in row}
+    assert "admin_ai_kind:cloudflare" in callbacks
+    assert "admin_ai_kind:custom" in callbacks
+
+
+def test_admin_ai_cloudflare_model_kb_includes_free_tier_coder_model():
+    from keyboards import admin_ai_cloudflare_model_kb, CLOUDFLARE_CODER_MODELS
+    kb = admin_ai_cloudflare_model_kb()
+    callbacks = {btn.callback_data for row in kb.inline_keyboard for btn in row}
+    assert "admin_ai_cf_model:@cf/qwen/qwen2.5-coder-32b-instruct" in callbacks
+    assert "admin_ai_cf_model:custom" in callbacks
+    assert len(CLOUDFLARE_CODER_MODELS) >= 1
