@@ -10,7 +10,7 @@ def main_menu_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton(text="📩 Adminga habar berish")],
         [KeyboardButton(text="🤖 Mening botlarim"), KeyboardButton(text="➕ Bot qo'shish")],
-        [KeyboardButton(text="💳 Hisob")],
+        [KeyboardButton(text="💳 Hisob"), KeyboardButton(text="❓ Yordam")],
     ]
     if is_admin:
         rows.append([KeyboardButton(text="🛠 Admin panel")])
@@ -29,7 +29,7 @@ def self_service_menu_kb() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="💳 Hisob")],
             [KeyboardButton(text="🤖 Mening botlarim")],
-            [KeyboardButton(text="📩 Adminga habar berish")],
+            [KeyboardButton(text="📩 Adminga habar berish"), KeyboardButton(text="❓ Yordam")],
         ],
         resize_keyboard=True,
     )
@@ -127,11 +127,19 @@ def my_bots_list_kb(bots) -> InlineKeyboardMarkup:
 
 def bot_manage_kb(bot_row) -> InlineKeyboardMarkup:
     running = bot_row["status"] == "running"
+    crashed = bot_row["status"] == "crashed"
     toggle_text = "⏹ To'xtatish" if running else "▶️ Ishga tushirish"
     toggle_cb = f"bot_stop:{bot_row['bot_id']}" if running else f"bot_start:{bot_row['bot_id']}"
     rows = [
         [InlineKeyboardButton(text=toggle_text, callback_data=toggle_cb)],
     ]
+    if crashed:
+        # Oddiy "Ishga tushirish" faqat mavjud muhitda qayta ishga tushiradi — agar
+        # crash sababi build/kutubxona muammosi bo'lsa yordam bermaydi. Shu sabab
+        # alohida "qayta build bilan" variantini ham ko'rsatamiz.
+        rows.append([InlineKeyboardButton(
+            text="🔁 Qayta build qilib urinish", callback_data=f"bot_rebuild:{bot_row['bot_id']}",
+        )])
     if bot_row["stars_hosted"]:
         rows.append([InlineKeyboardButton(
             text=f"🔁 Yana 24 soatga uzaytirish ({db.get_stars_per_unit()}⭐️)", callback_data=f"stars_extend:{bot_row['bot_id']}",
@@ -248,25 +256,45 @@ def admin_all_bots_kb(bots) -> InlineKeyboardMarkup:
 
 def admin_bot_view_kb(bot_row) -> InlineKeyboardMarkup:
     running = bot_row["status"] == "running"
+    crashed = bot_row["status"] == "crashed"
     toggle_text = "⏹ To'xtatish" if running else "▶️ Ishga tushirish"
     toggle_cb = f"bot_stop:{bot_row['bot_id']}" if running else f"bot_start:{bot_row['bot_id']}"
-    return InlineKeyboardMarkup(inline_keyboard=[
+    rows = [
         [InlineKeyboardButton(text="👤 Egasi haqida", callback_data=f"admin_owner_info:{bot_row['bot_id']}")],
         [InlineKeyboardButton(text=toggle_text, callback_data=toggle_cb)],
-        [
-            InlineKeyboardButton(text="💾 Resurs", callback_data=f"bot_resource:{bot_row['bot_id']}"),
-            InlineKeyboardButton(text="📡 Live log", callback_data=f"bot_live_log:{bot_row['bot_id']}"),
-        ],
-        [InlineKeyboardButton(text="ℹ️ Kod/log/env", callback_data=f"bot_info:{bot_row['bot_id']}")],
-        [InlineKeyboardButton(text="🧪 Shaxsiy test-deploy (o'z tokening bilan)", callback_data=f"admin_test_deploy:{bot_row['bot_id']}")],
-        [InlineKeyboardButton(text="🗑 O'chirish", callback_data=f"bot_delete:{bot_row['bot_id']}")],
-        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_all_bots")],
+    ]
+    if crashed:
+        rows.append([InlineKeyboardButton(
+            text="🔁 Qayta build qilib urinish", callback_data=f"bot_rebuild:{bot_row['bot_id']}",
+        )])
+    rows.append([
+        InlineKeyboardButton(text="💾 Resurs", callback_data=f"bot_resource:{bot_row['bot_id']}"),
+        InlineKeyboardButton(text="📡 Live log", callback_data=f"bot_live_log:{bot_row['bot_id']}"),
     ])
+    rows.append([InlineKeyboardButton(text="ℹ️ Kod/log/env", callback_data=f"bot_info:{bot_row['bot_id']}")])
+    rows.append([InlineKeyboardButton(text="🧪 Shaxsiy test-deploy (o'z tokening bilan)", callback_data=f"admin_test_deploy:{bot_row['bot_id']}")])
+    rows.append([InlineKeyboardButton(text="🗑 O'chirish", callback_data=f"bot_delete:{bot_row['bot_id']}")])
+    rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_all_bots")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def crash_notify_kb(bot_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔄 Qayta ishga tushirish", callback_data=f"bot_start:{bot_id}")],
+        [InlineKeyboardButton(text="🔁 Qayta build qilib urinish", callback_data=f"bot_rebuild:{bot_id}")],
+    ])
+
+
+def help_topics_kb(topics: dict) -> InlineKeyboardMarkup:
+    """topics: {topic_id: (sarlavha, matn)} — help_faq.FAQ_TOPICS bilan bir xil shakl."""
+    rows = [[InlineKeyboardButton(text=title, callback_data=f"help_topic:{topic_id}")]
+            for topic_id, (title, _) in topics.items()]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def help_back_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Yordam menyusiga qaytish", callback_data="help_back")],
     ])
 
 

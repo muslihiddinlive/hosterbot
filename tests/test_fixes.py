@@ -205,3 +205,44 @@ def test_bot_token_none_stays_none(tmp_path, monkeypatch):
     )
     fetched = db_mod.get_bot(bot_id)
     assert fetched["bot_token"] is None
+
+
+def test_format_uptime_days_and_hours():
+    from handlers.user_menu import _format_uptime
+    assert _format_uptime(3 * 86400 + 4 * 3600) == "3 kun 4 soat"
+
+
+def test_format_uptime_minutes_only():
+    from handlers.user_menu import _format_uptime
+    assert _format_uptime(45 * 60) == "45 daqiqa"
+
+
+def test_format_uptime_under_a_minute():
+    from handlers.user_menu import _format_uptime
+    assert _format_uptime(30) == "1 daqiqadan kam"
+
+
+def test_help_topics_keyboard_has_entry_per_topic():
+    from handlers.help_faq import FAQ_TOPICS
+    from keyboards import help_topics_kb
+    kb = help_topics_kb(FAQ_TOPICS)
+    # Har bir mavzu bitta qatorda, bitta tugma bo'lishi kerak (menyu tushunarli qolishi uchun)
+    assert len(kb.inline_keyboard) == len(FAQ_TOPICS)
+    all_callback_data = {row[0].callback_data for row in kb.inline_keyboard}
+    for topic_id in FAQ_TOPICS:
+        assert f"help_topic:{topic_id}" in all_callback_data
+
+
+def test_bot_manage_kb_shows_rebuild_only_when_crashed():
+    from keyboards import bot_manage_kb
+    running_row = {"bot_id": 1, "status": "running", "stars_hosted": 0}
+    crashed_row = {"bot_id": 1, "status": "crashed", "stars_hosted": 0}
+
+    running_kb = bot_manage_kb(running_row)
+    crashed_kb = bot_manage_kb(crashed_row)
+
+    running_callbacks = {btn.callback_data for row in running_kb.inline_keyboard for btn in row}
+    crashed_callbacks = {btn.callback_data for row in crashed_kb.inline_keyboard for btn in row}
+
+    assert "bot_rebuild:1" not in running_callbacks
+    assert "bot_rebuild:1" in crashed_callbacks

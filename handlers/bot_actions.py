@@ -12,7 +12,7 @@ import database as db
 from config import is_admin
 from states import ConfirmDelete
 from keyboards import bot_manage_kb, admin_bot_view_kb, cancel_kb, main_menu_kb
-from services.deploy_manager import start_bot_process, stop_bot_process, read_log_tail, is_running, format_log_block
+from services.deploy_manager import start_bot_process, stop_bot_process, read_log_tail, is_running, format_log_block, run_build_command
 from services.resource_monitor import can_start_new_bot, bot_ram_mb
 from services.file_utils import (
     cleanup_bot_files, write_env_file, extract_zip, resolve_project_root,
@@ -120,6 +120,98 @@ async def cb_bot_start(callback: CallbackQuery, bot: Bot):
 
     await callback.message.edit_text(
         f"🤖 <b>{html.escape(bot_row['bot_username'] or bot_row['display_name'] or 'Nomsiz bot')}</b>\nHolati: 🟢 ishlayapti",
+        parse_mode="HTML", reply_markup=_refresh_kb(bot_row, callback),
+    )
+    await backup_database(bot)
+
+
+@router.callback_query(F.data.startswith("bot_rebuild:"))
+async def cb_bot_rebuild(callback: CallbackQuery, bot: Bot):
+    """
+    "▶️ Ishga tushirish" faqat mavjud (avval build qilingan) muhitda process'ni
+    qayta ishga tushiradi — agar crash sababi masalan requirements.txt'dagi yangi
+    kutubxona yoki build muhitidagi muammo bo'lsa, oddiy qayta ishga tushirish
+    yordam bermaydi (foydalanuvchi buni tushunmay, "ishlamayapti" deb qayta-qayta
+    urinib, adminga murojaat qilardi).
+
+    Bu tugma build bosqichini ham QAYTA bajaradi (asl kodni qayta yuklamasdan,
+    diskda/tiklangan holatdagi kod ustida) — shu sabab faqat "crashed" holatdagi
+    botlar uchun ko'rsatiladi (bot_manage_kb/admin_bot_view_kb).
+    """
+    bot_id = int(callback.data.split(":")[1])
+    bot_row = db.get_bot(bot_id)
+    if not _authorized(callback, bot_row):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+
+    if db.is_banned(bot_row["owner_id"]) and not is_admin(callback.from_user.id):
+        await callback.answer("⛔️ Egasining ruxsati olib tashlangan — bot ishga tushirilmaydi.", show_alert=True)
+        return
+
+    allowed, used_mb, budget_mb = can_start_new_bot()
+    if not allowed:
+        await callback.answer(
+            f"⚠️ RAM byudjeti tugagan ({used_mb:.0f}/{budget_mb} MB band). "
+            f"Avval boshqa botni to'xtating.",
+            show_alert=True,
+        )
+        return
+
+    bot_label = f"@{bot_row['bot_username']}" if bot_row["bot_username"] else (bot_row["display_name"] or f"Bot #{bot_id}")
+    await callback.answer("Qayta build qilinmoqda...")
+    await callback.message.answer(f"⏳ {html.escape(bot_label)} — qayta build va ishga tushirilmoqda...")
+
+    ok, err = await _ensure_code_present(bot, bot_row)
+    if not ok:
+        await callback.message.answer(format_log_block(f"⚠️ {bot_label} — qayta build qilib bo'lmadi", err), parse_mode="HTML")
+        return
+    bot_row = db.get_bot(bot_id)  # code_path o'zgargan bo'lishi mumkin
+
+    # DIQQAT: run_build_command sinxron (blocking) subprocess.run chaqiradi — bosh
+    # event loop'ni bloklab qo'ymaslik uchun (main.py'dagi avvalgi "KRITIK FIX" bilan
+    # bir xil sabab) alohida thread'da ishga tushiramiz.
+    log_path = os.path.join(bot_row["code_path"], "run.log")
+    try:
+        with open(log_path, "a", encoding="utf-8") as log_file:
+            build_ok = await asyncio.to_thread(run_build_command, bot_row["code_path"], bot_row["build_cmd"] or "", log_file)
+    except Exception as e:
+        log.exception("Qayta build qilishda xato")
+        await callback.message.answer(format_log_block(f"⚠️ {bot_label} — build xatosi", str(e)), parse_mode="HTML")
+        return
+
+    if not build_ok:
+        db.set_bot_status(bot_id, "crashed", None)
+        error_tail = read_log_tail(bot_row["code_path"], n_lines=40)
+        await callback.message.answer(
+            format_log_block(f"❌ {bot_label} — build bosqichida yana xatolik", error_tail),
+            parse_mode="HTML",
+        )
+        return
+
+    envs = {row["key"]: row["value"] for row in db.list_envs(bot_id)}
+    try:
+        pid = start_bot_process(bot_id, bot_row["code_path"], bot_row["start_cmd"], envs)
+    except Exception as e:
+        log.exception("start_bot_process xatoligi")
+        await callback.message.answer(format_log_block(f"⚠️ {bot_label} — ishga tushirib bo'lmadi", str(e)), parse_mode="HTML")
+        return
+    db.set_bot_status(bot_id, "running", pid)
+
+    # Boshqa crash'lar kabi: process darhol o'lib qolganini tekshiramiz.
+    await asyncio.sleep(3)
+    if not is_running(bot_id):
+        db.set_bot_status(bot_id, "crashed", None)
+        crash_log = read_log_tail(bot_row["code_path"], n_lines=40)
+        await backup_database(bot)
+        await callback.message.answer(
+            format_log_block(f"❌ {bot_label} — qayta ishga tushgach darhol qulab tushdi", crash_log),
+            parse_mode="HTML",
+        )
+        return
+
+    bot_row = db.get_bot(bot_id)
+    await callback.message.answer(
+        f"✅ <b>{html.escape(bot_label)}</b> qayta build qilindi va ishlab turibdi!",
         parse_mode="HTML", reply_markup=_refresh_kb(bot_row, callback),
     )
     await backup_database(bot)

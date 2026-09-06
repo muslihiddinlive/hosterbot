@@ -50,6 +50,7 @@ Bot **webhook** rejimida ishlaydi (aiohttp web server orqali), shuning uchun Ren
 - `handlers/add_bot.py` — kod yuklash → build → start → ENV → deploy oqimi
 - `handlers/bot_actions.py` — start/stop/delete/info (kod, log, env)
 - `handlers/admin_panel.py` — barcha botlar/foydalanuvchilar, xabar yozish
+- `handlers/help_faq.py` — foydalanuvchilar uchun "❓ Yordam" / `/help` bo'limi (tez-tez so'raladigan savollar)
 - `services/deploy_manager.py` — subprocess orqali botlarni ishga tushirish, RAM limiti
 - `services/file_utils.py` — zip/py fayllarni aniqlash va joylashtirish
 - `database.py` — SQLite (users, bots, bot_envs)

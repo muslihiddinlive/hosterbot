@@ -21,7 +21,7 @@ from services.file_utils import (
 )
 from keyboards import crash_notify_kb
 
-from handlers import start, admin_review, user_menu, add_bot, bot_actions, admin_panel, stars
+from handlers import start, admin_review, user_menu, add_bot, bot_actions, admin_panel, stars, help_faq
 
 WATCHDOG_INTERVAL_SEC = 60
 BILLING_WATCHDOG_INTERVAL_SEC = 30
@@ -41,6 +41,7 @@ dp.include_router(add_bot.router)
 dp.include_router(bot_actions.router)
 dp.include_router(admin_panel.router)
 dp.include_router(stars.router)
+dp.include_router(help_faq.router)
 
 
 @dp.errors()
