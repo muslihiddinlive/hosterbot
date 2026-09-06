@@ -182,7 +182,7 @@ async def crash_watchdog():
                         bot_row["owner_id"],
                         format_log_block(f"⚠️ {label} kutilmaganda to'xtab qoldi", crash_log),
                         parse_mode="HTML",
-                        reply_markup=crash_notify_kb(bot_row["bot_id"]),
+                        reply_markup=crash_notify_kb(bot_row["bot_id"], has_env=bool(db.list_envs(bot_row["bot_id"]))),
                     )
                 except Exception:
                     pass

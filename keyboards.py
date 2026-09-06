@@ -98,7 +98,30 @@ def admin_stars_settings_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="✏️ Muddatni o'zgartirish (soat)", callback_data="admin_set_stars_hours")],
         [InlineKeyboardButton(text="✏️ Standart blok muddati (soat)", callback_data="admin_set_block_hours")],
         [InlineKeyboardButton(text="✏️ Min. yechish miqdori", callback_data="admin_set_min_withdraw")],
+        [InlineKeyboardButton(text="🤖 AI yordam narxi", callback_data="admin_set_ai_help_price")],
         [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_panel_back")],
+    ])
+
+
+def admin_ai_providers_kb(providers) -> InlineKeyboardMarkup:
+    rows = []
+    for p in providers:
+        icon = "🟢" if p["is_active"] else "⚪️"
+        rows.append([InlineKeyboardButton(
+            text=f"{icon} {p['name']} (ustuvorlik: {p['priority']})",
+            callback_data=f"admin_ai_provider_view:{p['provider_id']}",
+        )])
+    rows.append([InlineKeyboardButton(text="➕ Yangi provayder qo'shish", callback_data="admin_ai_provider_add")])
+    rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_panel_back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_ai_provider_view_kb(provider) -> InlineKeyboardMarkup:
+    toggle_text = "⏸ Nofaol qilish" if provider["is_active"] else "▶️ Faollashtirish"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=toggle_text, callback_data=f"admin_ai_provider_toggle:{provider['provider_id']}")],
+        [InlineKeyboardButton(text="🗑 O'chirish", callback_data=f"admin_ai_provider_delete:{provider['provider_id']}")],
+        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_ai_providers")],
     ])
 
 
@@ -125,7 +148,7 @@ def my_bots_list_kb(bots) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def bot_manage_kb(bot_row) -> InlineKeyboardMarkup:
+def bot_manage_kb(bot_row, has_env: bool = False) -> InlineKeyboardMarkup:
     running = bot_row["status"] == "running"
     crashed = bot_row["status"] == "crashed"
     toggle_text = "⏹ To'xtatish" if running else "▶️ Ishga tushirish"
@@ -140,6 +163,19 @@ def bot_manage_kb(bot_row) -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton(
             text="🔁 Qayta build qilib urinish", callback_data=f"bot_rebuild:{bot_row['bot_id']}",
         )])
+        # Crash bo'lganda foydalanuvchi o'zi tuzatib qayta yuklashi (bepul) yoki
+        # AI'dan yordam so'rashi (Stars) mumkin — pastdagi bitta qatorda ko'rsatamiz.
+        rows.append([
+            InlineKeyboardButton(text="📄 Kodni almashtirish", callback_data=f"fix_code:{bot_row['bot_id']}"),
+            InlineKeyboardButton(text="📋 requirements.txt", callback_data=f"fix_reqs:{bot_row['bot_id']}"),
+        ])
+        env_row = []
+        if has_env:
+            env_row.append(InlineKeyboardButton(text="🔑 ENV tahrirlash", callback_data=f"fix_env:{bot_row['bot_id']}"))
+        env_row.append(InlineKeyboardButton(
+            text=f"🤖 AI yordam ({db.get_ai_help_price_stars()}⭐️)", callback_data=f"ai_help:{bot_row['bot_id']}",
+        ))
+        rows.append(env_row)
     if bot_row["stars_hosted"]:
         rows.append([InlineKeyboardButton(
             text=f"🔁 Yana 24 soatga uzaytirish ({db.get_stars_per_unit()}⭐️)", callback_data=f"stars_extend:{bot_row['bot_id']}",
@@ -164,6 +200,7 @@ def admin_panel_kb(is_superadmin: bool = False) -> InlineKeyboardMarkup:
     if is_superadmin:
         rows.append([InlineKeyboardButton(text="⭐️ Stars narxi sozlamalari", callback_data="admin_stars_settings")])
         rows.append([InlineKeyboardButton(text="💰 Bot Stars balansi (real)", callback_data="admin_real_balance")])
+        rows.append([InlineKeyboardButton(text="🤖 AI provayderlar", callback_data="admin_ai_providers")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -278,11 +315,23 @@ def admin_bot_view_kb(bot_row) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def crash_notify_kb(bot_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
+def crash_notify_kb(bot_id: int, has_env: bool = False) -> InlineKeyboardMarkup:
+    rows = [
         [InlineKeyboardButton(text="🔄 Qayta ishga tushirish", callback_data=f"bot_start:{bot_id}")],
         [InlineKeyboardButton(text="🔁 Qayta build qilib urinish", callback_data=f"bot_rebuild:{bot_id}")],
-    ])
+        [
+            InlineKeyboardButton(text="📄 Kodni almashtirish", callback_data=f"fix_code:{bot_id}"),
+            InlineKeyboardButton(text="📋 requirements.txt", callback_data=f"fix_reqs:{bot_id}"),
+        ],
+    ]
+    env_row = []
+    if has_env:
+        env_row.append(InlineKeyboardButton(text="🔑 ENV tahrirlash", callback_data=f"fix_env:{bot_id}"))
+    env_row.append(InlineKeyboardButton(
+        text=f"🤖 AI yordam ({db.get_ai_help_price_stars()}⭐️)", callback_data=f"ai_help:{bot_id}",
+    ))
+    rows.append(env_row)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def help_topics_kb(topics: dict) -> InlineKeyboardMarkup:

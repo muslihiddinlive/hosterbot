@@ -10,15 +10,16 @@ from aiogram.fsm.context import FSMContext
 
 import database as db
 from config import is_admin
-from states import ConfirmDelete
+from states import ConfirmDelete, FixCode, FixRequirements, FixEnv
 from keyboards import bot_manage_kb, admin_bot_view_kb, cancel_kb, main_menu_kb
 from services.deploy_manager import start_bot_process, stop_bot_process, read_log_tail, is_running, format_log_block, run_build_command
 from services.resource_monitor import can_start_new_bot, bot_ram_mb
 from services.file_utils import (
     cleanup_bot_files, write_env_file, extract_zip, resolve_project_root,
-    normalize_requirements_filename, fix_all_py_encodings,
+    normalize_requirements_filename, fix_all_py_encodings, fix_py_encoding,
 )
 from services.backup import backup_database
+from services.ai_client import ask_ai, build_crash_diagnosis_prompt, AIError
 
 router = Router()
 log = logging.getLogger("hosterbot.bot_actions")
@@ -31,7 +32,7 @@ def _authorized(callback: CallbackQuery, bot_row) -> bool:
 def _refresh_kb(bot_row, callback: CallbackQuery):
     if is_admin(callback.from_user.id) and bot_row["owner_id"] != callback.from_user.id:
         return admin_bot_view_kb(bot_row)
-    return bot_manage_kb(bot_row)
+    return bot_manage_kb(bot_row, has_env=bool(db.list_envs(bot_row["bot_id"])))
 
 
 async def _ensure_code_present(bot: Bot, bot_row) -> tuple[bool, str]:
@@ -399,3 +400,340 @@ async def cb_bot_live_log(callback: CallbackQuery):
         await msg.edit_text(final_text, parse_mode="HTML")
     except Exception:
         pass
+
+
+# ---------- Crash-fix oqimi: kodni almashtirish ----------
+
+@router.callback_query(F.data.startswith("fix_code:"))
+async def cb_fix_code(callback: CallbackQuery, state: FSMContext):
+    bot_id = int(callback.data.split(":")[1])
+    bot_row = db.get_bot(bot_id)
+    if not _authorized(callback, bot_row):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+
+    await state.update_data(fix_bot_id=bot_id)
+    await state.set_state(FixCode.waiting_file)
+    await callback.message.answer(
+        "📄 Yangi <b>.py</b> faylni yuboring — eski kod faqat yangi fayl muvaffaqiyatli "
+        "qabul qilingandan SO'NG o'chiriladi (hozircha eski kod xavfsiz saqlanadi).\n\n"
+        "Bekor qilish uchun pastdagi tugmani bosing.",
+        parse_mode="HTML",
+        reply_markup=cancel_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(FixCode.waiting_file, F.document)
+async def receive_fix_code_file(message: Message, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    bot_id = data.get("fix_bot_id")
+    bot_row = db.get_bot(bot_id)
+    if bot_row is None or (bot_row["owner_id"] != message.from_user.id and not is_admin(message.from_user.id)):
+        await state.clear()
+        await message.answer("Ruxsat yo'q yoki bot topilmadi.", reply_markup=main_menu_kb(is_admin=is_admin(message.from_user.id)))
+        return
+
+    doc = message.document
+    file_name = doc.file_name or ""
+    lower_name = file_name.lower()
+
+    # DIQQAT: ba'zi fayl-menejerlar (ayniqsa telefondan yuklaganda) faylni
+    # "bot.py.txt" nomida saqlab yuborishi mumkin — bu foydalanuvchi xatosi emas,
+    # balki fayl-menejerning "Save As" xatti-harakati. Shu holatni avtomatik
+    # tuzatamiz: .txt qismini olib tashlab, asl .py nomiga qaytaramiz.
+    if lower_name.endswith(".py.txt"):
+        file_name = file_name[:-4]  # ".txt" ni kesib tashlaymiz -> "...py"
+        lower_name = file_name.lower()
+
+    if not lower_name.endswith(".py"):
+        await message.answer(
+            "❌ Faqat <b>.py</b> fayl qabul qilinadi. Boshqa kengaytmadagi fayl yubordingiz — "
+            "iltimos, to'g'ri Python faylini yuboring yoki bekor qiling.",
+            parse_mode="HTML",
+        )
+        return
+
+    workdir = bot_row["code_path"]
+    match = re.search(r'([^\s"\']+\.py)', bot_row["start_cmd"] or "")
+    target_name = os.path.basename(match.group(1)) if match else "main.py"
+    tmp_path = os.path.join(workdir, f"_incoming_{target_name}")
+
+    try:
+        await bot.download(doc, destination=tmp_path)
+    except Exception as e:
+        log.exception("Yangi kod faylini yuklab olishda xato")
+        await message.answer(f"⚠️ Faylni yuklab olishda xato: {e}")
+        return
+
+    # Faqat shu yerda, yangi fayl MUVAFFAQIYATLI qabul qilingandan keyin eski
+    # asosiy faylni o'chiramiz va yangisini o'rniga qo'yamiz — foydalanuvchi
+    # noto'g'ri fayl yuborsa (yoki yuklashda tarmoq xatosi bo'lsa), eski kod
+    # buzilmasdan qoladi.
+    target_path = os.path.join(workdir, target_name)
+    try:
+        os.replace(tmp_path, target_path)
+        fix_py_encoding(target_path)
+    except Exception as e:
+        log.exception("Yangi kodni joylashtirishda xato")
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        await message.answer(f"⚠️ Yangi kodni joylashtirishda xato: {e}")
+        return
+
+    await state.clear()
+
+    # Yangi kod bilan bevosita "qayta build + ishga tushirish" ni ishga tushiramiz —
+    # foydalanuvchi yana alohida tugma bosishiga hojat qoldirmaslik uchun.
+    await message.answer("✅ Yangi kod qabul qilindi. Qayta build va ishga tushirilmoqda...")
+    await _rebuild_and_start(bot_id, message.bot, message)
+
+
+@router.message(FixCode.waiting_file)
+async def fix_code_wrong_content_type(message: Message):
+    await message.answer("Iltimos, .py faylni <b>document</b> (fayl) sifatida yuboring.", parse_mode="HTML")
+
+
+# ---------- Crash-fix oqimi: requirements.txt almashtirish ----------
+
+@router.callback_query(F.data.startswith("fix_reqs:"))
+async def cb_fix_reqs(callback: CallbackQuery, state: FSMContext):
+    bot_id = int(callback.data.split(":")[1])
+    bot_row = db.get_bot(bot_id)
+    if not _authorized(callback, bot_row):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+
+    await state.update_data(fix_bot_id=bot_id)
+    await state.set_state(FixRequirements.waiting_file)
+    await callback.message.answer(
+        "📋 Yangi <b>requirements.txt</b> faylni yuboring (masalan yetishmagan kutubxonani qo'shib).",
+        parse_mode="HTML",
+        reply_markup=cancel_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(FixRequirements.waiting_file, F.document)
+async def receive_fix_reqs_file(message: Message, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    bot_id = data.get("fix_bot_id")
+    bot_row = db.get_bot(bot_id)
+    if bot_row is None or (bot_row["owner_id"] != message.from_user.id and not is_admin(message.from_user.id)):
+        await state.clear()
+        await message.answer("Ruxsat yo'q yoki bot topilmadi.", reply_markup=main_menu_kb(is_admin=is_admin(message.from_user.id)))
+        return
+
+    doc = message.document
+    file_name = (doc.file_name or "").lower()
+    if file_name.endswith(".txt.txt"):
+        file_name = file_name[:-4]
+    if not file_name.endswith(".txt"):
+        await message.answer("❌ Faqat .txt (requirements.txt) fayl qabul qilinadi.")
+        return
+
+    workdir = bot_row["code_path"]
+    target_path = os.path.join(workdir, "requirements.txt")
+    try:
+        await bot.download(doc, destination=target_path)
+    except Exception as e:
+        log.exception("requirements.txt yuklashda xato")
+        await message.answer(f"⚠️ Faylni yuklab olishda xato: {e}")
+        return
+
+    await state.clear()
+    await message.answer("✅ Yangi requirements.txt qabul qilindi. Qayta build va ishga tushirilmoqda...")
+    await _rebuild_and_start(bot_id, message.bot, message)
+
+
+@router.message(FixRequirements.waiting_file)
+async def fix_reqs_wrong_content_type(message: Message):
+    await message.answer("Iltimos, requirements.txt faylni <b>document</b> (fayl) sifatida yuboring.", parse_mode="HTML")
+
+
+async def _rebuild_and_start(bot_id: int, bot: Bot, message: Message):
+    """fix_code/fix_reqs oqimlaridan keyin umumiy qayta build+start logikasi —
+    cb_bot_rebuild bilan bir xil ketma-ketlik, lekin callback emas, oddiy xabar
+    orqali javob beradi (chunki bu yerda CallbackQuery yo'q, faqat Message)."""
+    bot_row = db.get_bot(bot_id)
+    if bot_row is None:
+        return
+    bot_label = f"@{bot_row['bot_username']}" if bot_row["bot_username"] else (bot_row["display_name"] or f"Bot #{bot_id}")
+
+    allowed, used_mb, budget_mb = can_start_new_bot()
+    if not allowed:
+        await message.answer(f"⚠️ RAM byudjeti tugagan ({used_mb:.0f}/{budget_mb} MB band). Avval boshqa botni to'xtating.")
+        return
+
+    normalize_requirements_filename(bot_row["code_path"])
+    fix_all_py_encodings(bot_row["code_path"])
+
+    log_path = os.path.join(bot_row["code_path"], "run.log")
+    try:
+        with open(log_path, "a", encoding="utf-8") as log_file:
+            build_ok = await asyncio.to_thread(run_build_command, bot_row["code_path"], bot_row["build_cmd"] or "", log_file)
+    except Exception as e:
+        log.exception("Qayta build qilishda xato")
+        await message.answer(format_log_block(f"⚠️ {bot_label} — build xatosi", str(e)), parse_mode="HTML")
+        return
+
+    if not build_ok:
+        db.set_bot_status(bot_id, "crashed", None)
+        error_tail = read_log_tail(bot_row["code_path"], n_lines=40)
+        await message.answer(format_log_block(f"❌ {bot_label} — build bosqichida yana xatolik", error_tail), parse_mode="HTML")
+        return
+
+    envs = {row["key"]: row["value"] for row in db.list_envs(bot_id)}
+    try:
+        pid = start_bot_process(bot_id, bot_row["code_path"], bot_row["start_cmd"], envs)
+    except Exception as e:
+        log.exception("start_bot_process xatoligi")
+        await message.answer(format_log_block(f"⚠️ {bot_label} — ishga tushirib bo'lmadi", str(e)), parse_mode="HTML")
+        return
+    db.set_bot_status(bot_id, "running", pid)
+
+    await asyncio.sleep(3)
+    if not is_running(bot_id):
+        db.set_bot_status(bot_id, "crashed", None)
+        crash_log = read_log_tail(bot_row["code_path"], n_lines=40)
+        await backup_database(bot)
+        await message.answer(format_log_block(f"❌ {bot_label} — qayta ishga tushgach darhol qulab tushdi", crash_log), parse_mode="HTML")
+        return
+
+    bot_row = db.get_bot(bot_id)
+    has_env = bool(db.list_envs(bot_id))
+    await message.answer(
+        f"✅ <b>{html.escape(bot_label)}</b> qayta build qilindi va ishlab turibdi!",
+        parse_mode="HTML", reply_markup=bot_manage_kb(bot_row, has_env=has_env),
+    )
+    await backup_database(bot)
+
+
+# ---------- Crash-fix oqimi: mavjud ENV qiymatlarini tahrirlash ----------
+
+@router.callback_query(F.data.startswith("fix_env:"))
+async def cb_fix_env(callback: CallbackQuery, state: FSMContext):
+    bot_id = int(callback.data.split(":")[1])
+    bot_row = db.get_bot(bot_id)
+    if not _authorized(callback, bot_row):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+
+    envs = db.list_envs(bot_id)
+    if not envs:
+        await callback.answer("Bu botda hozircha ENV yo'q.", show_alert=True)
+        return
+
+    env_list = "\n".join(f"• <code>{html.escape(e['key'])}</code>" for e in envs)
+    await state.update_data(fix_bot_id=bot_id)
+    await state.set_state(FixEnv.waiting_key_value)
+    await callback.message.answer(
+        f"🔑 Mavjud ENV kalitlari:\n{env_list}\n\n"
+        f"Yangilamoqchi bo'lgan qiymatni <code>KEY=YANGI_QIYMAT</code> shaklida yuboring "
+        f"(bir vaqtda bitta ENV).",
+        parse_mode="HTML",
+        reply_markup=cancel_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(FixEnv.waiting_key_value)
+async def receive_fix_env_value(message: Message, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    bot_id = data.get("fix_bot_id")
+    bot_row = db.get_bot(bot_id)
+    if bot_row is None or (bot_row["owner_id"] != message.from_user.id and not is_admin(message.from_user.id)):
+        await state.clear()
+        await message.answer("Ruxsat yo'q yoki bot topilmadi.", reply_markup=main_menu_kb(is_admin=is_admin(message.from_user.id)))
+        return
+
+    text = (message.text or "").strip()
+    if "=" not in text:
+        await message.answer("Format noto'g'ri. <code>KEY=QIYMAT</code> shaklida yuboring.", parse_mode="HTML")
+        return
+
+    key, _, value = text.partition("=")
+    key = key.strip()
+    value = value.strip()
+    if not key:
+        await message.answer("KEY bo'sh bo'lishi mumkin emas.")
+        return
+
+    existing_keys = {e["key"] for e in db.list_envs(bot_id)}
+    if key not in existing_keys:
+        await message.answer(
+            f"⚠️ <code>{html.escape(key)}</code> bu botda mavjud emas. Faqat mavjud ENV kalitlarini "
+            f"tahrirlash mumkin (yangi ENV qo'shish uchun botni qayta deploy qiling).",
+            parse_mode="HTML",
+        )
+        return
+
+    db.upsert_env(bot_id, key, value)
+    write_env_file(bot_id, {e["key"]: e["value"] for e in db.list_envs(bot_id)})
+    await state.clear()
+
+    await message.answer(f"✅ <code>{html.escape(key)}</code> yangilandi. Qayta build va ishga tushirilmoqda...", parse_mode="HTML")
+    await _rebuild_and_start(bot_id, message.bot, message)
+
+
+# ---------- AI yordam (crash-tashxis, Stars orqali to'lanadi) ----------
+
+@router.callback_query(F.data.startswith("ai_help:"))
+async def cb_ai_help(callback: CallbackQuery, bot: Bot):
+    bot_id = int(callback.data.split(":")[1])
+    bot_row = db.get_bot(bot_id)
+    if not _authorized(callback, bot_row):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+
+    price = db.get_ai_help_price_stars()
+    owner_id = bot_row["owner_id"]
+    balance = db.get_user_balance(owner_id)
+    if balance < price:
+        await callback.answer(
+            f"⭐️ Balansingiz yetarli emas ({balance}/{price}). \"💳 Hisob\" orqali to'ldiring.",
+            show_alert=True,
+        )
+        return
+
+    await callback.answer("🤖 AI tahlil qilmoqda, biroz kuting...")
+    bot_label = f"@{bot_row['bot_username']}" if bot_row["bot_username"] else (bot_row["display_name"] or f"Bot #{bot_id}")
+    thinking_msg = await callback.message.answer(f"🤖 {html.escape(bot_label)} uchun AI tashxis tayyorlanmoqda...")
+
+    log_text = read_log_tail(bot_row["code_path"], n_lines=60)
+    code_snippet = ""
+    try:
+        match = re.search(r'([^\s"\']+\.py)', bot_row["start_cmd"] or "")
+        py_name = os.path.basename(match.group(1)) if match else None
+        if py_name:
+            py_path = os.path.join(bot_row["code_path"], py_name)
+            if os.path.isfile(py_path):
+                with open(py_path, "r", encoding="utf-8", errors="ignore") as f:
+                    code_snippet = f.read()
+    except Exception:
+        pass  # kod parchasini o'qib bo'lmasa ham, log bilan tashxis qo'yishga urinamiz
+
+    system_prompt, user_prompt = build_crash_diagnosis_prompt(bot_label, log_text, code_snippet)
+
+    try:
+        diagnosis = await ask_ai(system_prompt, user_prompt, telegram_id=owner_id, bot_id=bot_id)
+    except AIError as e:
+        log.warning(f"AI yordam xatosi (bot_id={bot_id}): {e}")
+        await thinking_msg.edit_text(
+            f"⚠️ AI yordam hozircha ishlamayapti: {html.escape(str(e))}\n\n"
+            f"Stars balansingizdan hech narsa yechilmadi."
+        )
+        return
+
+    # Faqat AI muvaffaqiyatli javob qaytargandan KEYIN Stars yechamiz —
+    # foydalanuvchi ishlamagan xizmat uchun pul to'lamasligi kerak.
+    db.add_user_balance(owner_id, -price, reason=f"AI crash-tashxis (bot #{bot_id})")
+    new_balance = db.get_user_balance(owner_id)
+
+    await thinking_msg.edit_text(
+        f"🤖 <b>AI tashxis — {html.escape(bot_label)}</b>\n\n{html.escape(diagnosis)}\n\n"
+        f"<i>-{price}⭐️ yechildi. Qolgan balans: {new_balance}⭐️</i>",
+        parse_mode="HTML",
+    )

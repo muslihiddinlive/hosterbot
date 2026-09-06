@@ -89,7 +89,10 @@ async def manage_bot(callback: CallbackQuery):
     )
     if is_live:
         text += f"\n💾 RAM: {bot_ram_mb(bot_id):.1f} MB"
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=bot_manage_kb(bot_row))
+    await callback.message.edit_text(
+        text, parse_mode="HTML",
+        reply_markup=bot_manage_kb(bot_row, has_env=bool(db.list_envs(bot_id))),
+    )
     await callback.answer()
 
 

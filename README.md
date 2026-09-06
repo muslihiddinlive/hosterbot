@@ -51,6 +51,23 @@ Bot **webhook** rejimida ishlaydi (aiohttp web server orqali), shuning uchun Ren
 - `handlers/bot_actions.py` — start/stop/delete/info (kod, log, env)
 - `handlers/admin_panel.py` — barcha botlar/foydalanuvchilar, xabar yozish
 - `handlers/help_faq.py` — foydalanuvchilar uchun "❓ Yordam" / `/help` bo'limi (tez-tez so'raladigan savollar)
+
+### Crash-fix va AI yordam (bot "crashed" bo'lganda)
+
+Bot qulab tushganda foydalanuvchiga to'rtta yo'l taklif qilinadi:
+- **📄 Kodni almashtirish** / **📋 requirements.txt** — foydalanuvchi o'zi yangi fayl yuboradi,
+  eski fayl faqat yangisi muvaffaqiyatli qabul qilingandan SO'NG almashtiriladi (`handlers/bot_actions.py`,
+  `FixCode`/`FixRequirements` state'lari). `.py.txt` kengaytmasi (fayl-menejer xatosi) avtomatik `.py`ga tuzatiladi.
+- **🔑 ENV tahrirlash** — faqat botda ENV mavjud bo'lsagina ko'rsatiladi (mavjud kalitni yangilaydi, yangi qo'shmaydi).
+- **🤖 AI yordam** (Stars bilan to'lanadi, narxi superadmin panelidan sozlanadi, default 5⭐) — log va kod
+  parchasini `services/ai_client.py` orqali sozlangan AI provayderlardan biriga yuborib, oddiy tilda
+  tashxis va tuzatish tavsiyasi oladi.
+
+Superadmin **"🤖 AI provayderlar"** bo'limidan istalgan sondagi OpenAI-compatible endpoint
+(Cloudflare Workers AI, OpenRouter va h.k.) qo'sha oladi — har birining o'z kunlik so'rov
+limiti va ustuvorlik darajasi bor. Bitta provayder kunlik limitga yetsa, tizim avtomatik
+keyingi (ustuvorligi pastroq) provayderga o'tadi — bitta AI hisobining byudjeti butun
+platformani to'xtatib qo'ymasligi uchun.
 - `services/deploy_manager.py` — subprocess orqali botlarni ishga tushirish, RAM limiti
 - `services/file_utils.py` — zip/py fayllarni aniqlash va joylashtirish
 - `database.py` — SQLite (users, bots, bot_envs)
@@ -96,3 +113,14 @@ ko'rib chiqing:
 `services/deploy_manager.py` ichidagi `static_scan()` funksiyasi faqat bir nechta aniq
 xavfli patternni (`os.system`, `rm -rf` va h.k.) belgilaydi — bu blocklist emas, faqat
 ogohlantirish. Har doim yuklangan kodni imkon qadar ko'rib chiqing.
+
+## Testlar
+
+```bash
+pip install -r requirements.txt --break-system-packages
+pip install pytest pytest-asyncio --break-system-packages
+pytest tests/ -v
+```
+
+`pytest-asyncio` faqat testlar uchun kerak (production `requirements.txt`da yo'q) —
+`services/ai_client.py`dagi async fallback logikasini sinovdan o'tkazish uchun ishlatiladi.

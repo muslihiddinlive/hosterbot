@@ -82,6 +82,28 @@ CREATE TABLE IF NOT EXISTS stars_ledger (
     reason          TEXT NOT NULL,
     created_at      INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS ai_providers (
+    provider_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT NOT NULL,        -- masalan "Cloudflare Workers AI", "OpenRouter"
+    base_url        TEXT NOT NULL,        -- OpenAI-compatible /v1/chat/completions endpoint
+    api_key         TEXT,                 -- shifrlangan (crypto_utils)
+    model           TEXT NOT NULL,        -- masalan "@cf/qwen/qwen2.5-coder-32b-instruct"
+    daily_limit     INTEGER NOT NULL DEFAULT 0,  -- kunlik so'rov limiti (0 = cheklovsiz)
+    priority        INTEGER NOT NULL DEFAULT 100,  -- kichikroq = avval sinaladi
+    is_active       INTEGER NOT NULL DEFAULT 1,
+    created_at      INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ai_usage_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider_id     INTEGER NOT NULL,
+    telegram_id     INTEGER NOT NULL,
+    bot_id          INTEGER,
+    created_at      INTEGER NOT NULL,     -- kunlik limit shu ustun bo'yicha hisoblanadi
+    success         INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY (provider_id) REFERENCES ai_providers(provider_id)
+);
 """
 
 
@@ -486,3 +508,106 @@ def list_envs(bot_id: int):
     with get_conn() as conn:
         rows = conn.execute("SELECT key, value FROM bot_envs WHERE bot_id=?", (bot_id,)).fetchall()
     return [{"key": r["key"], "value": decrypt_value(r["value"])} for r in rows]
+
+
+def upsert_env(bot_id: int, key: str, value: str):
+    """FixEnv oqimi uchun: agar shu KEY bilan ENV bo'lsa qiymatini yangilaydi,
+    bo'lmasa yangi qator qo'shadi — foydalanuvchi bir xil KEY'ni ikki marta
+    yozib, duplikat yaratib qo'ymasligi uchun."""
+    with get_conn() as conn:
+        existing = conn.execute(
+            "SELECT id FROM bot_envs WHERE bot_id=? AND key=?", (bot_id, key)
+        ).fetchone()
+        if existing:
+            conn.execute("UPDATE bot_envs SET value=? WHERE id=?", (encrypt_value(value), existing["id"]))
+        else:
+            conn.execute(
+                "INSERT INTO bot_envs (bot_id, key, value) VALUES (?,?,?)",
+                (bot_id, key, encrypt_value(value)),
+            )
+
+
+def delete_env(bot_id: int, key: str):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM bot_envs WHERE bot_id=? AND key=?", (bot_id, key))
+
+
+# ---------- AI providers (superadmin: bir nechta AI API qo'shish, ustuvorlik/fallback) ----------
+
+def create_ai_provider(name: str, base_url: str, api_key: str, model: str,
+                        daily_limit: int = 0, priority: int = 100) -> int:
+    with get_conn() as conn:
+        cur = conn.execute(
+            """INSERT INTO ai_providers (name, base_url, api_key, model, daily_limit, priority, is_active, created_at)
+               VALUES (?,?,?,?,?,?,1,?)""",
+            (name, base_url, encrypt_value(api_key) if api_key else None, model,
+             daily_limit, priority, int(time.time())),
+        )
+        return cur.lastrowid
+
+
+def _decrypt_provider_row(row):
+    if row is None:
+        return None
+    d = dict(row)
+    if d.get("api_key"):
+        d["api_key"] = decrypt_value(d["api_key"])
+    return d
+
+
+def get_ai_provider(provider_id: int):
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM ai_providers WHERE provider_id=?", (provider_id,)).fetchone()
+        return _decrypt_provider_row(row)
+
+
+def list_ai_providers(active_only: bool = False):
+    """priority bo'yicha o'sish tartibida (kichikroq = avval sinaladi) qaytaradi —
+    services/ai_client.py shu tartibda birma-bir provayderlarni sinab ko'radi."""
+    query = "SELECT * FROM ai_providers"
+    if active_only:
+        query += " WHERE is_active=1"
+    query += " ORDER BY priority ASC, provider_id ASC"
+    with get_conn() as conn:
+        rows = conn.execute(query).fetchall()
+        return [_decrypt_provider_row(r) for r in rows]
+
+
+def set_ai_provider_active(provider_id: int, active: bool):
+    with get_conn() as conn:
+        conn.execute("UPDATE ai_providers SET is_active=? WHERE provider_id=?", (1 if active else 0, provider_id))
+
+
+def delete_ai_provider(provider_id: int):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM ai_providers WHERE provider_id=?", (provider_id,))
+        conn.execute("DELETE FROM ai_usage_log WHERE provider_id=?", (provider_id,))
+
+
+def get_ai_provider_usage_today(provider_id: int) -> int:
+    """Shu provayder uchun bugungi (UTC 00:00'dan buyon) muvaffaqiyatli
+    so'rovlar soni — Cloudflare'ning o'zi ham kunlik hisobini 00:00 UTC'da
+    tiklaydi, shu bilan bir xil chegarani ishlatamiz (chalkashlik bo'lmasin)."""
+    today_utc = time.strftime("%Y-%m-%d", time.gmtime())
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) as c FROM ai_usage_log WHERE provider_id=? AND success=1 "
+            "AND strftime('%Y-%m-%d', created_at, 'unixepoch') = ?",
+            (provider_id, today_utc),
+        ).fetchone()
+        return row["c"] if row else 0
+
+
+def log_ai_usage(provider_id: int, telegram_id: int, bot_id: int, success: bool = True):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO ai_usage_log (provider_id, telegram_id, bot_id, created_at, success) VALUES (?,?,?,?,?)",
+            (provider_id, telegram_id, bot_id, int(time.time()), 1 if success else 0),
+        )
+
+
+def get_ai_help_price_stars() -> int:
+    """Superadmin panelidan o'zgartirilishi mumkin — bir marta AI crash-tashxis
+    so'rashning Stars narxi. config.py'da standart yo'q, shu sabab kod ichida
+    to'g'ridan-to'g'ri default beriladi."""
+    return int(get_setting("ai_help_price_stars", 5))

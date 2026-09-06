@@ -2,6 +2,8 @@ import io
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 os.environ.setdefault("BOT_TOKEN", "123:test")
@@ -246,3 +248,225 @@ def test_bot_manage_kb_shows_rebuild_only_when_crashed():
 
     assert "bot_rebuild:1" not in running_callbacks
     assert "bot_rebuild:1" in crashed_callbacks
+
+
+def test_bot_manage_kb_crashed_shows_fix_and_ai_help_buttons():
+    # Xavfsizlik/UX fix: crashed holatda foydalanuvchi kodni/requirements.txt'ni
+    # o'zi almashtira olishi yoki AI'dan yordam so'rashi kerak (Stars orqali).
+    from keyboards import bot_manage_kb
+    crashed_row = {"bot_id": 7, "status": "crashed", "stars_hosted": 0}
+    kb = bot_manage_kb(crashed_row, has_env=False)
+    callbacks = {btn.callback_data for row in kb.inline_keyboard for btn in row}
+    assert "fix_code:7" in callbacks
+    assert "fix_reqs:7" in callbacks
+    assert "ai_help:7" in callbacks
+    assert "fix_env:7" not in callbacks  # has_env=False bo'lgani uchun ko'rinmasligi kerak
+
+
+def test_bot_manage_kb_shows_env_edit_only_when_has_env():
+    from keyboards import bot_manage_kb
+    crashed_row = {"bot_id": 9, "status": "crashed", "stars_hosted": 0}
+    kb = bot_manage_kb(crashed_row, has_env=True)
+    callbacks = {btn.callback_data for row in kb.inline_keyboard for btn in row}
+    assert "fix_env:9" in callbacks
+
+
+def test_crash_notify_kb_matches_manage_kb_buttons():
+    from keyboards import crash_notify_kb
+    kb = crash_notify_kb(5, has_env=True)
+    callbacks = {btn.callback_data for row in kb.inline_keyboard for btn in row}
+    assert {"bot_start:5", "bot_rebuild:5", "fix_code:5", "fix_reqs:5", "fix_env:5", "ai_help:5"} <= callbacks
+
+
+def test_upsert_env_updates_existing_key_without_duplicating(tmp_path, monkeypatch):
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    bot_id = db_mod.create_bot(
+        owner_id=1, bot_username=None, bot_token=None, code_path="/tmp/x",
+        storage_file_id=None, is_zip=False, language="python",
+        build_cmd="", start_cmd="python bot.py",
+    )
+    db_mod.add_env(bot_id, "TOKEN", "old-value")
+    db_mod.upsert_env(bot_id, "TOKEN", "new-value")
+
+    envs = db_mod.list_envs(bot_id)
+    assert len(envs) == 1
+    assert envs[0]["value"] == "new-value"
+
+
+def test_upsert_env_creates_new_key_if_absent(tmp_path, monkeypatch):
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    bot_id = db_mod.create_bot(
+        owner_id=1, bot_username=None, bot_token=None, code_path="/tmp/x",
+        storage_file_id=None, is_zip=False, language="python",
+        build_cmd="", start_cmd="python bot.py",
+    )
+    db_mod.upsert_env(bot_id, "NEW_KEY", "value1")
+    envs = db_mod.list_envs(bot_id)
+    assert len(envs) == 1
+    assert envs[0]["key"] == "NEW_KEY"
+
+
+def test_delete_env_removes_key(tmp_path, monkeypatch):
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    bot_id = db_mod.create_bot(
+        owner_id=1, bot_username=None, bot_token=None, code_path="/tmp/x",
+        storage_file_id=None, is_zip=False, language="python",
+        build_cmd="", start_cmd="python bot.py",
+    )
+    db_mod.add_env(bot_id, "A", "1")
+    db_mod.add_env(bot_id, "B", "2")
+    db_mod.delete_env(bot_id, "A")
+    envs = db_mod.list_envs(bot_id)
+    assert len(envs) == 1
+    assert envs[0]["key"] == "B"
+
+
+def test_ai_provider_crud_roundtrip(tmp_path, monkeypatch):
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    provider_id = db_mod.create_ai_provider(
+        name="Cloudflare Workers AI",
+        base_url="https://api.cloudflare.com/client/v4/accounts/ACCID/ai/v1",
+        api_key="secret-key-123",
+        model="@cf/qwen/qwen2.5-coder-32b-instruct",
+        daily_limit=40,
+        priority=10,
+    )
+    provider = db_mod.get_ai_provider(provider_id)
+    assert provider["name"] == "Cloudflare Workers AI"
+    assert provider["api_key"] == "secret-key-123"  # deshifrlangan holda qaytishi kerak
+    assert provider["is_active"] == 1
+
+    db_mod.set_ai_provider_active(provider_id, False)
+    assert db_mod.get_ai_provider(provider_id)["is_active"] == 0
+
+    db_mod.delete_ai_provider(provider_id)
+    assert db_mod.get_ai_provider(provider_id) is None
+
+
+def test_ai_provider_api_key_encrypted_at_rest(tmp_path, monkeypatch):
+    # bot_token uchun qilingan xavfsizlik fixi bilan bir xil qoida: API kalit
+    # ham ai_providers jadvalida xom holda saqlanmasligi kerak.
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    provider_id = db_mod.create_ai_provider(
+        name="Test Provider", base_url="https://example.com/v1",
+        api_key="raw-secret-key", model="test-model",
+    )
+    with db_mod.get_conn() as conn:
+        stored = conn.execute(
+            "SELECT api_key FROM ai_providers WHERE provider_id=?", (provider_id,)
+        ).fetchone()["api_key"]
+    assert stored != "raw-secret-key"
+
+
+def test_list_ai_providers_ordered_by_priority(tmp_path, monkeypatch):
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    db_mod.create_ai_provider(name="Low priority (backup)", base_url="https://b.example/v1", api_key=None, model="m", priority=50)
+    db_mod.create_ai_provider(name="High priority (primary)", base_url="https://a.example/v1", api_key=None, model="m", priority=5)
+    providers = db_mod.list_ai_providers()
+    assert providers[0]["name"] == "High priority (primary)"
+    assert providers[1]["name"] == "Low priority (backup)"
+
+
+def test_list_ai_providers_active_only_filters_inactive(tmp_path, monkeypatch):
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    active_id = db_mod.create_ai_provider(name="Active", base_url="https://a.example/v1", api_key=None, model="m")
+    inactive_id = db_mod.create_ai_provider(name="Inactive", base_url="https://b.example/v1", api_key=None, model="m")
+    db_mod.set_ai_provider_active(inactive_id, False)
+
+    all_providers = db_mod.list_ai_providers(active_only=False)
+    active_providers = db_mod.list_ai_providers(active_only=True)
+    assert len(all_providers) == 2
+    assert len(active_providers) == 1
+    assert active_providers[0]["provider_id"] == active_id
+
+
+def test_ai_provider_usage_counter_increments_and_respects_daily_limit(tmp_path, monkeypatch):
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    provider_id = db_mod.create_ai_provider(
+        name="Limited", base_url="https://example.com/v1", api_key=None, model="m", daily_limit=2,
+    )
+    assert db_mod.get_ai_provider_usage_today(provider_id) == 0
+
+    db_mod.log_ai_usage(provider_id, telegram_id=111, bot_id=1, success=True)
+    db_mod.log_ai_usage(provider_id, telegram_id=111, bot_id=1, success=True)
+    assert db_mod.get_ai_provider_usage_today(provider_id) == 2
+
+    # Muvaffaqiyatsiz urinishlar kunlik limitga qo'shilmasligi kerak — foydalanuvchi
+    # xato tufayli o'z byudjetini yo'qotib qo'ymasligi uchun.
+    db_mod.log_ai_usage(provider_id, telegram_id=111, bot_id=1, success=False)
+    assert db_mod.get_ai_provider_usage_today(provider_id) == 2
+
+
+def test_get_ai_help_price_stars_default_and_override(tmp_path, monkeypatch):
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    assert db_mod.get_ai_help_price_stars() == 5  # default
+    db_mod.set_setting("ai_help_price_stars", 10)
+    assert db_mod.get_ai_help_price_stars() == 10
+
+
+@pytest.mark.asyncio
+async def test_ask_ai_falls_back_to_next_provider_when_first_hits_daily_limit(tmp_path, monkeypatch):
+    # Asosiy dizayn talabi: bitta provayder kunlik limitga yetsa, tizim
+    # avtomatik ravishda ustuvorligi pastroq keyingi provayderga o'tishi kerak.
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    primary_id = db_mod.create_ai_provider(
+        name="Primary (full)", base_url="https://primary.example/v1", api_key=None,
+        model="m1", daily_limit=1, priority=1,
+    )
+    backup_id = db_mod.create_ai_provider(
+        name="Backup", base_url="https://backup.example/v1", api_key=None,
+        model="m2", daily_limit=0, priority=2,
+    )
+    # Primary'ni "bugun allaqachon limitga yetgan" holatga keltiramiz
+    db_mod.log_ai_usage(primary_id, telegram_id=1, bot_id=None, success=True)
+
+    import importlib
+    import services.ai_client as ai_client_mod
+    importlib.reload(ai_client_mod)
+
+    calls = []
+
+    async def fake_call_provider(provider, system_prompt, user_prompt):
+        calls.append(provider["name"])
+        return f"javob {provider['name']}dan"
+
+    monkeypatch.setattr(ai_client_mod, "_call_provider", fake_call_provider)
+
+    result = await ai_client_mod.ask_ai("sys", "user", telegram_id=1, bot_id=None)
+    assert result == "javob Backupdan"
+    assert calls == ["Backup"]  # Primary chaqirilmagan — limitga yetgani uchun oldindan o'tkazib yuborilgan
+
+
+@pytest.mark.asyncio
+async def test_ask_ai_raises_when_no_active_providers(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+    import importlib
+    import services.ai_client as ai_client_mod
+    importlib.reload(ai_client_mod)
+
+    with pytest.raises(ai_client_mod.AIError):
+        await ai_client_mod.ask_ai("sys", "user", telegram_id=1, bot_id=None)
+
+
+def test_build_crash_diagnosis_prompt_truncates_long_log():
+    from services.ai_client import build_crash_diagnosis_prompt
+    long_log = "x" * 5000
+    system_prompt, user_prompt = build_crash_diagnosis_prompt("@testbot", long_log)
+    assert "o'zbek" in system_prompt
+    # Log 2000 belgigacha qisqartirilishi kerak (token sarfini kamaytirish uchun)
+    assert len(user_prompt) < 2200
+
+
+def test_fix_code_py_txt_extension_is_auto_corrected():
+    # Fayl-menejer xatosi: "bot.py.txt" -> "bot.py" ga avtomatik tuzatilishi kerak,
+    # lekin boshqa har qanday kengaytma rad etilishi kerak.
+    def normalize(file_name: str) -> str:
+        lower_name = file_name.lower()
+        if lower_name.endswith(".py.txt"):
+            file_name = file_name[:-4]
+        return file_name
+
+    assert normalize("bot.py.txt").lower().endswith(".py")
+    assert normalize("bot.py.txt") == "bot.py"
+    assert not normalize("bot.txt").lower().endswith(".py")
+    assert not normalize("bot.zip").lower().endswith(".py")

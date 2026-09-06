@@ -14,8 +14,8 @@ from aiogram.fsm.context import FSMContext
 
 import database as db
 from config import is_admin, is_superadmin, STORAGE_GROUP_ID, ADMIN_IDS, SUPERADMIN_IDS
-from states import AdminMessageUser, AdminSetLimit, AdminStarsSetting, AdminBanCustomHours, AdminBroadcast, AdminTestDeploy, AdminSearchUser
-from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb, admin_gift_list_kb, admin_self_gift_list_kb, admin_ban_choice_kb, admin_broadcast_confirm_kb, admin_sender_choice_kb
+from states import AdminMessageUser, AdminSetLimit, AdminStarsSetting, AdminBanCustomHours, AdminBroadcast, AdminTestDeploy, AdminSearchUser, AdminAIProvider
+from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb, admin_gift_list_kb, admin_self_gift_list_kb, admin_ban_choice_kb, admin_broadcast_confirm_kb, admin_sender_choice_kb, admin_ai_providers_kb, admin_ai_provider_view_kb
 from services.deploy_manager import stop_bot_process, start_bot_process, run_build_command, is_running, read_log_tail
 from services.file_utils import bot_workdir
 from services.resource_monitor import can_start_new_bot
@@ -287,6 +287,29 @@ async def set_block_hours(message: Message, state: FSMContext):
         return
     db.set_setting("block_default_hours", int(text))
     await message.answer(f"✅ Endi standart blok muddati: {text} soat.")
+
+
+@router.callback_query(F.data == "admin_set_ai_help_price")
+async def cb_admin_set_ai_help_price(callback: CallbackQuery, state: FSMContext):
+    if not is_superadmin(callback.from_user.id):
+        await callback.answer("Bu faqat superadminlar uchun.", show_alert=True)
+        return
+    await state.set_state(AdminStarsSetting.waiting_ai_help_price)
+    await callback.message.answer(
+        f"AI crash-tashxis so'rashning narxi necha ⭐️ bo'lsin? Raqam yozing (hozir: {db.get_ai_help_price_stars()})."
+    )
+    await callback.answer()
+
+
+@router.message(AdminStarsSetting.waiting_ai_help_price)
+async def set_ai_help_price(message: Message, state: FSMContext):
+    await state.clear()
+    text = (message.text or "").strip()
+    if not text.isdigit() or int(text) <= 0:
+        await message.answer("Musbat butun son yuboring.")
+        return
+    db.set_setting("ai_help_price_stars", int(text))
+    await message.answer(f"✅ Endi AI yordam narxi: {text} ⭐️")
 
 
 @router.callback_query(F.data == "admin_users")
@@ -1120,3 +1143,192 @@ async def _finalize_test_deploy(message: Message, state: FSMContext):
     except Exception as e:
         log.exception("Test-deploy xatoligi")
         await message.answer(f"Xato: {str(e)[:300]}")
+
+
+# ---------- AI provayderlar (superadmin: bir nechta AI API qo'shish, byudjet muammosini yumshatish) ----------
+
+@router.callback_query(F.data == "admin_ai_providers")
+async def cb_admin_ai_providers(callback: CallbackQuery):
+    if not is_superadmin(callback.from_user.id):
+        await callback.answer("Bu faqat superadminlar uchun.", show_alert=True)
+        return
+    providers = db.list_ai_providers()
+    if not providers:
+        await callback.message.edit_text(
+            "🤖 <b>AI provayderlar</b>\n\nHozircha birorta ham qo'shilmagan. "
+            "Foydalanuvchilar \"AI yordam\" tugmasini ko'rmaydi (yoki bosganda xato oladi), "
+            "toki kamida bitta faol provayder qo'shilmaguncha.",
+            parse_mode="HTML",
+            reply_markup=admin_ai_providers_kb([]),
+        )
+        await callback.answer()
+        return
+
+    lines = ["🤖 <b>AI provayderlar</b>\n"]
+    for p in providers:
+        used_today = db.get_ai_provider_usage_today(p["provider_id"])
+        limit_label = f"{used_today}/{p['daily_limit']}" if p["daily_limit"] > 0 else f"{used_today}/cheksiz"
+        status = "🟢 faol" if p["is_active"] else "⚪️ nofaol"
+        lines.append(f"• <b>{html.escape(p['name'])}</b> ({status}) — bugun: {limit_label} so'rov")
+    lines.append("\nBatafsil ko'rish uchun ro'yxatdan tanlang:")
+
+    await callback.message.edit_text("\n".join(lines), parse_mode="HTML", reply_markup=admin_ai_providers_kb(providers))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_ai_provider_view:"))
+async def cb_admin_ai_provider_view(callback: CallbackQuery):
+    if not is_superadmin(callback.from_user.id):
+        await callback.answer("Bu faqat superadminlar uchun.", show_alert=True)
+        return
+    provider_id = int(callback.data.split(":")[1])
+    provider = db.get_ai_provider(provider_id)
+    if provider is None:
+        await callback.answer("Provayder topilmadi.", show_alert=True)
+        return
+
+    used_today = db.get_ai_provider_usage_today(provider_id)
+    limit_label = f"{used_today}/{provider['daily_limit']}" if provider["daily_limit"] > 0 else f"{used_today}/cheksiz"
+    masked_key = (provider["api_key"][:6] + "..." + provider["api_key"][-4:]) if provider["api_key"] and len(provider["api_key"]) > 12 else ("bor" if provider["api_key"] else "yo'q")
+
+    text = (
+        f"🤖 <b>{html.escape(provider['name'])}</b>\n\n"
+        f"Endpoint: <code>{html.escape(provider['base_url'])}</code>\n"
+        f"Model: <code>{html.escape(provider['model'])}</code>\n"
+        f"API key: <code>{html.escape(masked_key)}</code>\n"
+        f"Ustuvorlik: {provider['priority']} (kichikroq = avval sinaladi)\n"
+        f"Kunlik limit: {limit_label} so'rov\n"
+        f"Holati: {'🟢 faol' if provider['is_active'] else '⚪️ nofaol'}"
+    )
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=admin_ai_provider_view_kb(provider))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_ai_provider_toggle:"))
+async def cb_admin_ai_provider_toggle(callback: CallbackQuery):
+    if not is_superadmin(callback.from_user.id):
+        await callback.answer("Bu faqat superadminlar uchun.", show_alert=True)
+        return
+    provider_id = int(callback.data.split(":")[1])
+    provider = db.get_ai_provider(provider_id)
+    if provider is None:
+        await callback.answer("Provayder topilmadi.", show_alert=True)
+        return
+    db.set_ai_provider_active(provider_id, not provider["is_active"])
+    await cb_admin_ai_provider_view(callback)
+
+
+@router.callback_query(F.data.startswith("admin_ai_provider_delete:"))
+async def cb_admin_ai_provider_delete(callback: CallbackQuery):
+    if not is_superadmin(callback.from_user.id):
+        await callback.answer("Bu faqat superadminlar uchun.", show_alert=True)
+        return
+    provider_id = int(callback.data.split(":")[1])
+    db.delete_ai_provider(provider_id)
+    await callback.answer("🗑 Provayder o'chirildi.", show_alert=True)
+    await cb_admin_ai_providers(callback)
+
+
+@router.callback_query(F.data == "admin_ai_provider_add")
+async def cb_admin_ai_provider_add(callback: CallbackQuery, state: FSMContext):
+    if not is_superadmin(callback.from_user.id):
+        await callback.answer("Bu faqat superadminlar uchun.", show_alert=True)
+        return
+    await state.set_state(AdminAIProvider.waiting_name)
+    await callback.message.answer(
+        "🤖 Yangi AI provayder qo'shish.\n\nProvayder nomini yozing (masalan: <code>Cloudflare Workers AI</code>):",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(AdminAIProvider.waiting_name)
+async def ai_provider_name_entered(message: Message, state: FSMContext):
+    name = (message.text or "").strip()
+    if not name:
+        await message.answer("Nom bo'sh bo'lishi mumkin emas.")
+        return
+    await state.update_data(ai_name=name)
+    await state.set_state(AdminAIProvider.waiting_base_url)
+    await message.answer(
+        "Endpoint URL'ni yozing (OpenAI-compatible, <code>/chat/completions</code>gacha, masalan:\n"
+        "<code>https://api.cloudflare.com/client/v4/accounts/YOUR_ACCOUNT_ID/ai/v1</code>):",
+        parse_mode="HTML",
+    )
+
+
+@router.message(AdminAIProvider.waiting_base_url)
+async def ai_provider_url_entered(message: Message, state: FSMContext):
+    url = (message.text or "").strip()
+    if not url.startswith("http"):
+        await message.answer("To'g'ri URL yozing (http:// yoki https:// bilan boshlanishi kerak).")
+        return
+    await state.update_data(ai_base_url=url)
+    await state.set_state(AdminAIProvider.waiting_api_key)
+    await message.answer(
+        "API kalitni yuboring (bu bazada shifrlangan holda saqlanadi). "
+        "Agar kalit shart bo'lmasa (masalan lokal endpoint), <code>-</code> yozing:",
+        parse_mode="HTML",
+    )
+
+
+@router.message(AdminAIProvider.waiting_api_key)
+async def ai_provider_key_entered(message: Message, state: FSMContext):
+    key = (message.text or "").strip()
+    await state.update_data(ai_api_key=None if key == "-" else key)
+    await state.set_state(AdminAIProvider.waiting_model)
+    await message.answer(
+        "Model nomini yozing (masalan: <code>@cf/qwen/qwen2.5-coder-32b-instruct</code>):",
+        parse_mode="HTML",
+    )
+
+
+@router.message(AdminAIProvider.waiting_model)
+async def ai_provider_model_entered(message: Message, state: FSMContext):
+    model = (message.text or "").strip()
+    if not model:
+        await message.answer("Model nomi bo'sh bo'lishi mumkin emas.")
+        return
+    await state.update_data(ai_model=model)
+    await state.set_state(AdminAIProvider.waiting_daily_limit)
+    await message.answer(
+        "Kunlik so'rov limiti nechta bo'lsin? (0 = cheklovsiz — Cloudflare dashboard'idagi "
+        "haqiqiy Neuron sarfingizga qarab belgilang, masalan: 40):"
+    )
+
+
+@router.message(AdminAIProvider.waiting_daily_limit)
+async def ai_provider_limit_entered(message: Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if not text.isdigit():
+        await message.answer("Butun son yuboring (0 = cheklovsiz).")
+        return
+    await state.update_data(ai_daily_limit=int(text))
+    await state.set_state(AdminAIProvider.waiting_price_stars)
+    await message.answer(
+        "Ustuvorlik darajasini yozing (kichikroq raqam = avval sinaladi, masalan: 10):"
+    )
+
+
+@router.message(AdminAIProvider.waiting_price_stars)
+async def ai_provider_priority_entered(message: Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if not text.isdigit():
+        await message.answer("Butun son yuboring.")
+        return
+    data = await state.get_data()
+    await state.clear()
+
+    provider_id = db.create_ai_provider(
+        name=data["ai_name"],
+        base_url=data["ai_base_url"],
+        api_key=data.get("ai_api_key"),
+        model=data["ai_model"],
+        daily_limit=data["ai_daily_limit"],
+        priority=int(text),
+    )
+    await message.answer(
+        f"✅ AI provayder qo'shildi: <b>{html.escape(data['ai_name'])}</b> (ID: {provider_id}).\n"
+        f"Endi u faol holatda — \"🤖 AI provayderlar\" bo'limidan boshqarishingiz mumkin.",
+        parse_mode="HTML",
+    )

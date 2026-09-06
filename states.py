@@ -38,6 +38,7 @@ class AdminStarsSetting(StatesGroup):
     waiting_hours = State()
     waiting_min_withdraw = State()
     waiting_block_hours = State()
+    waiting_ai_help_price = State()
 
 
 class AdminBanCustomHours(StatesGroup):
@@ -55,3 +56,29 @@ class AdminTestDeploy(StatesGroup):
 
 class AdminSearchUser(StatesGroup):
     waiting_query = State()
+
+
+class AdminAIProvider(StatesGroup):
+    """Superadmin — AI provider (Cloudflare Workers AI, OpenRouter, va h.k.) qo'shish/tahrirlash."""
+    waiting_name = State()
+    waiting_base_url = State()
+    waiting_api_key = State()
+    waiting_model = State()
+    waiting_daily_limit = State()
+    waiting_price_stars = State()
+
+
+class FixCode(StatesGroup):
+    """Crashed bot uchun 'Kodni almashtirish' — yangi .py fayl kelmaguncha
+    eski kod o'chirilmaydi (bot_actions.py'dagi cb_fix_code)."""
+    waiting_file = State()
+
+
+class FixRequirements(StatesGroup):
+    """Crashed bot uchun 'requirements.txt almashtirish/tahrirlash'."""
+    waiting_file = State()
+
+
+class FixEnv(StatesGroup):
+    """Crashed bot uchun mavjud ENV qiymatlarini tahrirlash (KEY=VALUE, bittadan)."""
+    waiting_key_value = State()
