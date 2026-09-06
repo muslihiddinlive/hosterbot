@@ -150,3 +150,58 @@ def test_python_version_pinned_to_stable_release():
         version = f.read().strip()
     major, minor = (int(x) for x in version.split(".")[:2])
     assert (major, minor) < (3, 14), ".python-version 3.14+ ga o'tkazilgan - PTB 21.x buzilishi mumkin"
+
+
+def _fresh_db(tmp_path, monkeypatch):
+    """Har bir testga alohida, bo'sh platform.db beradi (davlat testlar orasida
+    sizib qolmasligi uchun) va bot_envs bilan bir xil ENCRYPTION_KEY ni yoqadi."""
+    import importlib
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv("ENCRYPTION_KEY", Fernet.generate_key().decode())
+    import config
+    importlib.reload(config)
+    monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "platform_test.db"))
+
+    import services.crypto_utils as crypto_utils_mod
+    importlib.reload(crypto_utils_mod)
+
+    import database as db_mod
+    importlib.reload(db_mod)
+    db_mod.init_db()
+    return db_mod
+
+
+def test_bot_token_encrypted_at_rest(tmp_path, monkeypatch):
+    # Xavfsizlik fix: bots.bot_token endi bot_envs.value bilan bir xil qoidaga
+    # bo'ysunadi - ENCRYPTION_KEY bo'lsa, xom holda emas, shifrlangan holda saqlanadi.
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    raw_token = "123456:AA-real-looking-secret-token"
+
+    bot_id = db_mod.create_bot(
+        owner_id=1, bot_username=None, bot_token=raw_token, code_path="/tmp/x",
+        storage_file_id=None, is_zip=False, language="python",
+        build_cmd="", start_cmd="python bot.py",
+    )
+
+    with db_mod.get_conn() as conn:
+        stored = conn.execute("SELECT bot_token FROM bots WHERE bot_id=?", (bot_id,)).fetchone()["bot_token"]
+    assert stored != raw_token, "bot_token bazada xom (shifrlanmagan) holda saqlanmoqda"
+
+    fetched = db_mod.get_bot(bot_id)
+    assert fetched["bot_token"] == raw_token, "get_bot() orqali deshifrlangan asl token qaytishi kerak"
+
+    listed = db_mod.list_all_bots()
+    assert listed[0]["bot_token"] == raw_token, "list_all_bots() orqali ham deshifrlangan token qaytishi kerak"
+
+
+def test_bot_token_none_stays_none(tmp_path, monkeypatch):
+    # bot_token=None bo'lgan (odatiy) hollarda encrypt/decrypt orqali xato chiqmasligi kerak.
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    bot_id = db_mod.create_bot(
+        owner_id=1, bot_username=None, bot_token=None, code_path="/tmp/x",
+        storage_file_id=None, is_zip=False, language="python",
+        build_cmd="", start_cmd="python bot.py",
+    )
+    fetched = db_mod.get_bot(bot_id)
+    assert fetched["bot_token"] is None

@@ -368,33 +368,52 @@ def count_user_bots(owner_id: int) -> int:
 
 def create_bot(owner_id, bot_username, bot_token, code_path, storage_file_id, is_zip, language,
                 build_cmd, start_cmd, display_name=None, deployed_by=None) -> int:
+    # DIQQAT (xavfsizlik fix): bot_token bu yerda XOM Telegram bot tokeni bo'lishi mumkin
+    # (masalan admin_panel.py'dagi test-deploy oqimida). bot_envs.value kabi bu ham
+    # platform.db orqali STORAGE_GROUP_ID guruhiga backup qilinadi, shu sabab bot_envs bilan
+    # bir xil qoidaga bo'ysunishi kerak: ENCRYPTION_KEY bo'lsa shifrlab saqlaymiz.
+    encrypted_token = encrypt_value(bot_token) if bot_token else bot_token
     with get_conn() as conn:
         cur = conn.execute(
             """INSERT INTO bots
                (owner_id, bot_username, bot_token, code_path, storage_file_id, is_zip, language,
                 build_cmd, start_cmd, display_name, status, created_at, deployed_by)
                VALUES (?,?,?,?,?,?,?,?,?,?, 'stopped', ?, ?)""",
-            (owner_id, bot_username, bot_token, code_path, storage_file_id, int(is_zip), language,
+            (owner_id, bot_username, encrypted_token, code_path, storage_file_id, int(is_zip), language,
              build_cmd, start_cmd, display_name, int(time.time()), deployed_by),
         )
         return cur.lastrowid
 
 
+def _decrypt_bot_row(row):
+    """sqlite3.Row o'zgarmas (immutable) bo'lgani uchun dict'ga o'girib, bot_token'ni
+    deshifrlab qaytaramiz. Chaqiruvchi tomon hamon row["bot_token"] kabi ishlata oladi."""
+    if row is None:
+        return None
+    d = dict(row)
+    if d.get("bot_token"):
+        d["bot_token"] = decrypt_value(d["bot_token"])
+    return d
+
+
 def get_bot(bot_id: int):
     with get_conn() as conn:
-        return conn.execute("SELECT * FROM bots WHERE bot_id=?", (bot_id,)).fetchone()
+        row = conn.execute("SELECT * FROM bots WHERE bot_id=?", (bot_id,)).fetchone()
+        return _decrypt_bot_row(row)
 
 
 def list_user_bots(owner_id: int):
     with get_conn() as conn:
-        return conn.execute(
+        rows = conn.execute(
             "SELECT * FROM bots WHERE owner_id=? AND status != 'deleted' ORDER BY created_at DESC", (owner_id,)
         ).fetchall()
+        return [_decrypt_bot_row(r) for r in rows]
 
 
 def list_all_bots():
     with get_conn() as conn:
-        return conn.execute("SELECT * FROM bots WHERE status != 'deleted' ORDER BY created_at DESC").fetchall()
+        rows = conn.execute("SELECT * FROM bots WHERE status != 'deleted' ORDER BY created_at DESC").fetchall()
+        return [_decrypt_bot_row(r) for r in rows]
 
 
 def set_bot_status(bot_id: int, status: str, pid: int = None):
@@ -444,10 +463,11 @@ def list_expired_stars_bots():
     """Hozir 'running' holatda turgan, lekin to'lov muddati o'tib ketgan stars_hosted botlar."""
     now = int(time.time())
     with get_conn() as conn:
-        return conn.execute(
+        rows = conn.execute(
             "SELECT * FROM bots WHERE stars_hosted=1 AND status='running' AND paid_until IS NOT NULL AND paid_until <= ?",
             (now,),
         ).fetchall()
+        return [_decrypt_bot_row(r) for r in rows]
 
 
 # ---------- envs ----------
