@@ -52,13 +52,21 @@ Bot **webhook** rejimida ishlaydi (aiohttp web server orqali), shuning uchun Ren
 - `handlers/admin_panel.py` — barcha botlar/foydalanuvchilar, xabar yozish
 - `handlers/help_faq.py` — foydalanuvchilar uchun "❓ Yordam" / `/help` bo'limi (tez-tez so'raladigan savollar)
 
-### Crash-fix va AI yordam (bot "crashed" bo'lganda)
+### Botni tahrirlash (kod/requirements/ENV) va crash-fix
 
-Bot qulab tushganda foydalanuvchiga to'rtta yo'l taklif qilinadi:
+Har qanday holatdagi bot (running/stopped/crashed) uchun **"🛠 Botni tahrirlash"**
+tugmasi bor (`bot_manage` sahifasida, `edit_bot_menu_kb`):
 - **📄 Kodni almashtirish** / **📋 requirements.txt** — foydalanuvchi o'zi yangi fayl yuboradi,
   eski fayl faqat yangisi muvaffaqiyatli qabul qilingandan SO'NG almashtiriladi (`handlers/bot_actions.py`,
   `FixCode`/`FixRequirements` state'lari). `.py.txt` kengaytmasi (fayl-menejer xatosi) avtomatik `.py`ga tuzatiladi.
 - **🔑 ENV tahrirlash** — faqat botda ENV mavjud bo'lsagina ko'rsatiladi (mavjud kalitni yangilaydi, yangi qo'shmaydi).
+
+O'zgarish saqlangach bot avtomatik qayta build qilinib ishga tushiriladi (`_rebuild_and_start`).
+Agar bot tahrirlash paytida **ishlab turgan** bo'lsa, avval xavfsiz to'xtatiladi — aks holda
+eski va yangi jarayon parallel ishlab, bitta Telegram token bilan konflikt yaratib qo'yishi mumkin edi.
+
+Faqat **crashed** holatda qo'shimcha ravishda:
+- **🔁 Qayta build qilib urinish** — oddiy "Ishga tushirish"dan farqli, build bosqichini ham qayta bajaradi.
 - **🤖 AI yordam** (Stars bilan to'lanadi, narxi superadmin panelidan sozlanadi, default 5⭐) — log va kod
   parchasini `services/ai_client.py` orqali sozlangan AI provayderlardan biriga yuborib, oddiy tilda
   tashxis va tuzatish tavsiyasi oladi.

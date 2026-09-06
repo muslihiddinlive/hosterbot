@@ -250,25 +250,43 @@ def test_bot_manage_kb_shows_rebuild_only_when_crashed():
     assert "bot_rebuild:1" in crashed_callbacks
 
 
-def test_bot_manage_kb_crashed_shows_fix_and_ai_help_buttons():
-    # Xavfsizlik/UX fix: crashed holatda foydalanuvchi kodni/requirements.txt'ni
-    # o'zi almashtira olishi yoki AI'dan yordam so'rashi kerak (Stars orqali).
+def test_bot_manage_kb_crashed_shows_rebuild_and_ai_help_only():
+    # AI-tashxis va "qayta build" faqat crashed holatda ma'noli — bot_manage_kb'da
+    # shu ikkovi ko'rinadi. Kod/requirements/env tahrirlash endi alohida
+    # "🛠 Botni tahrirlash" menyusiga ko'chirilgan (edit_bot_menu_kb) — har qanday
+    # holatdagi bot uchun bir xil ishlashi kerak, shu sabab bot_manage_kb'da emas.
     from keyboards import bot_manage_kb
     crashed_row = {"bot_id": 7, "status": "crashed", "stars_hosted": 0}
     kb = bot_manage_kb(crashed_row, has_env=False)
     callbacks = {btn.callback_data for row in kb.inline_keyboard for btn in row}
-    assert "fix_code:7" in callbacks
-    assert "fix_reqs:7" in callbacks
+    assert "bot_rebuild:7" in callbacks
     assert "ai_help:7" in callbacks
-    assert "fix_env:7" not in callbacks  # has_env=False bo'lgani uchun ko'rinmasligi kerak
+    assert "edit_bot_menu:7" in callbacks
 
 
-def test_bot_manage_kb_shows_env_edit_only_when_has_env():
+def test_bot_manage_kb_shows_edit_menu_regardless_of_status():
+    # Asosiy talab: "🛠 Botni tahrirlash" running/stopped/crashed — barcha
+    # holatda ko'rinishi kerak, faqat crash bo'lganda emas.
     from keyboards import bot_manage_kb
-    crashed_row = {"bot_id": 9, "status": "crashed", "stars_hosted": 0}
-    kb = bot_manage_kb(crashed_row, has_env=True)
-    callbacks = {btn.callback_data for row in kb.inline_keyboard for btn in row}
-    assert "fix_env:9" in callbacks
+    for status in ("running", "stopped", "crashed"):
+        row = {"bot_id": 3, "status": status, "stars_hosted": 0}
+        kb = bot_manage_kb(row)
+        callbacks = {btn.callback_data for r in kb.inline_keyboard for btn in r}
+        assert "edit_bot_menu:3" in callbacks, f"status={status} uchun edit_bot_menu ko'rinishi kerak"
+
+
+def test_edit_bot_menu_kb_has_code_and_reqs_always_env_conditionally():
+    from keyboards import edit_bot_menu_kb
+    kb_without_env = edit_bot_menu_kb(9, has_env=False)
+    callbacks_without = {btn.callback_data for row in kb_without_env.inline_keyboard for btn in row}
+    assert "fix_code:9" in callbacks_without
+    assert "fix_reqs:9" in callbacks_without
+    assert "fix_env:9" not in callbacks_without
+
+    kb_with_env = edit_bot_menu_kb(9, has_env=True)
+    callbacks_with = {btn.callback_data for row in kb_with_env.inline_keyboard for btn in row}
+    assert "fix_env:9" in callbacks_with
+    assert "bot_manage:9" in callbacks_with  # "orqaga" tugmasi bot_manage'ga qaytishi kerak
 
 
 def test_crash_notify_kb_matches_manage_kb_buttons():
@@ -498,3 +516,63 @@ def test_admin_ai_cloudflare_model_kb_includes_free_tier_coder_model():
     assert "admin_ai_cf_model:@cf/qwen/qwen2.5-coder-32b-instruct" in callbacks
     assert "admin_ai_cf_model:custom" in callbacks
     assert len(CLOUDFLARE_CODER_MODELS) >= 1
+
+
+def test_rebuild_stops_running_bot_before_rebuilding(tmp_path, monkeypatch):
+    # Asosiy talab: "🛠 Botni tahrirlash" orqali ISHLAB TURGAN botni tahrirlaganda,
+    # _rebuild_and_start avval eski jarayonni to'xtatishi kerak — aks holda eski
+    # va yangi jarayon parallel ishlab, ikkitasi bitta Telegram token bilan
+    # polling qilib konflikt yaratib qo'yishi mumkin edi.
+    import asyncio
+    import handlers.bot_actions as bot_actions_mod
+
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    code_dir = tmp_path / "bot_1"
+    code_dir.mkdir()
+    bot_id = db_mod.create_bot(
+        owner_id=1, bot_username="testbot", bot_token=None, code_path=str(code_dir),
+        storage_file_id=None, is_zip=False, language="python",
+        build_cmd="", start_cmd="python bot.py",
+    )
+    db_mod.set_bot_status(bot_id, "running", 12345)
+
+    stop_calls = []
+    monkeypatch.setattr(bot_actions_mod, "db", db_mod)
+    monkeypatch.setattr(bot_actions_mod, "stop_bot_process", lambda bid: stop_calls.append(bid))
+    monkeypatch.setattr(bot_actions_mod, "is_running", lambda bid: True)
+    monkeypatch.setattr(bot_actions_mod, "can_start_new_bot", lambda: (False, 999, 1000))  # RAM to'la - build'gacha yetmasin
+
+    class FakeMessage:
+        async def answer(self, *args, **kwargs):
+            pass
+
+    asyncio.run(bot_actions_mod._rebuild_and_start(bot_id, bot=None, message=FakeMessage()))
+    assert stop_calls == [bot_id], "running bot avval to'xtatilishi kerak edi"
+
+
+def test_rebuild_skips_stop_when_bot_not_running(tmp_path, monkeypatch):
+    import asyncio
+    import handlers.bot_actions as bot_actions_mod
+
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    code_dir = tmp_path / "bot_2"
+    code_dir.mkdir()
+    bot_id = db_mod.create_bot(
+        owner_id=1, bot_username="testbot", bot_token=None, code_path=str(code_dir),
+        storage_file_id=None, is_zip=False, language="python",
+        build_cmd="", start_cmd="python bot.py",
+    )
+    db_mod.set_bot_status(bot_id, "crashed", None)
+
+    stop_calls = []
+    monkeypatch.setattr(bot_actions_mod, "db", db_mod)
+    monkeypatch.setattr(bot_actions_mod, "stop_bot_process", lambda bid: stop_calls.append(bid))
+    monkeypatch.setattr(bot_actions_mod, "is_running", lambda bid: False)
+    monkeypatch.setattr(bot_actions_mod, "can_start_new_bot", lambda: (False, 999, 1000))
+
+    class FakeMessage:
+        async def answer(self, *args, **kwargs):
+            pass
+
+    asyncio.run(bot_actions_mod._rebuild_and_start(bot_id, bot=None, message=FakeMessage()))
+    assert stop_calls == [], "crashed (allaqachon to'xtagan) bot uchun stop_bot_process chaqirilmasligi kerak"

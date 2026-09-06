@@ -187,19 +187,17 @@ def bot_manage_kb(bot_row, has_env: bool = False) -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton(
             text="🔁 Qayta build qilib urinish", callback_data=f"bot_rebuild:{bot_row['bot_id']}",
         )])
-        # Crash bo'lganda foydalanuvchi o'zi tuzatib qayta yuklashi (bepul) yoki
-        # AI'dan yordam so'rashi (Stars) mumkin — pastdagi bitta qatorda ko'rsatamiz.
-        rows.append([
-            InlineKeyboardButton(text="📄 Kodni almashtirish", callback_data=f"fix_code:{bot_row['bot_id']}"),
-            InlineKeyboardButton(text="📋 requirements.txt", callback_data=f"fix_reqs:{bot_row['bot_id']}"),
-        ])
-        env_row = []
-        if has_env:
-            env_row.append(InlineKeyboardButton(text="🔑 ENV tahrirlash", callback_data=f"fix_env:{bot_row['bot_id']}"))
-        env_row.append(InlineKeyboardButton(
+        # AI-tashxis faqat "nega qulab tushdi" savoliga javob beradi, shu sabab
+        # faqat crashed holatda ma'noli — boshqa holatda ko'rsatilmaydi.
+        rows.append([InlineKeyboardButton(
             text=f"🤖 AI yordam ({db.get_ai_help_price_stars()}⭐️)", callback_data=f"ai_help:{bot_row['bot_id']}",
-        ))
-        rows.append(env_row)
+        )])
+    # "🛠 Botni tahrirlash" (kod/requirements/env almashtirish) botning holatidan
+    # QAT'I NAZAR har doim ko'rsatiladi — foydalanuvchi ishlab turgan botni ham
+    # yangilashi mumkin bo'lishi kerak, faqat crash bo'lgandagina emas.
+    rows.append([InlineKeyboardButton(
+        text="🛠 Botni tahrirlash", callback_data=f"edit_bot_menu:{bot_row['bot_id']}",
+    )])
     if bot_row["stars_hosted"]:
         rows.append([InlineKeyboardButton(
             text=f"🔁 Yana 24 soatga uzaytirish ({db.get_stars_per_unit()}⭐️)", callback_data=f"stars_extend:{bot_row['bot_id']}",
@@ -211,6 +209,20 @@ def bot_manage_kb(bot_row, has_env: bool = False) -> InlineKeyboardMarkup:
     rows.append([InlineKeyboardButton(text="ℹ️ Bot haqida (kod/log/env)", callback_data=f"bot_info:{bot_row['bot_id']}")])
     rows.append([InlineKeyboardButton(text="🗑 O'chirish", callback_data=f"bot_delete:{bot_row['bot_id']}")])
     rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="bot_list_back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def edit_bot_menu_kb(bot_id: int, has_env: bool = False) -> InlineKeyboardMarkup:
+    """'🛠 Botni tahrirlash' bosilganda ochiladigan pastki menyu — kod/requirements/env
+    almashtirish tugmalari (fix_code/fix_reqs/fix_env handler'lari bilan bir xil,
+    holat crashed/running/stopped bo'lishidan qat'i nazar ishlaydi)."""
+    rows = [
+        [InlineKeyboardButton(text="📄 Kodni almashtirish", callback_data=f"fix_code:{bot_id}")],
+        [InlineKeyboardButton(text="📋 requirements.txt almashtirish", callback_data=f"fix_reqs:{bot_id}")],
+    ]
+    if has_env:
+        rows.append([InlineKeyboardButton(text="🔑 ENV tahrirlash", callback_data=f"fix_env:{bot_id}")])
+    rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data=f"bot_manage:{bot_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

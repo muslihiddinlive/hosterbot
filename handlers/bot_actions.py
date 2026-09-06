@@ -11,7 +11,7 @@ from aiogram.fsm.context import FSMContext
 import database as db
 from config import is_admin
 from states import ConfirmDelete, FixCode, FixRequirements, FixEnv
-from keyboards import bot_manage_kb, admin_bot_view_kb, cancel_kb, main_menu_kb
+from keyboards import bot_manage_kb, admin_bot_view_kb, cancel_kb, main_menu_kb, edit_bot_menu_kb
 from services.deploy_manager import start_bot_process, stop_bot_process, read_log_tail, is_running, format_log_block, run_build_command
 from services.resource_monitor import can_start_new_bot, bot_ram_mb
 from services.file_utils import (
@@ -402,6 +402,28 @@ async def cb_bot_live_log(callback: CallbackQuery):
         pass
 
 
+# ---------- "🛠 Botni tahrirlash" menyusi (har qanday holatdagi bot uchun) ----------
+
+@router.callback_query(F.data.startswith("edit_bot_menu:"))
+async def cb_edit_bot_menu(callback: CallbackQuery):
+    bot_id = int(callback.data.split(":")[1])
+    bot_row = db.get_bot(bot_id)
+    if not _authorized(callback, bot_row):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+
+    has_env = bool(db.list_envs(bot_id))
+    bot_label = f"@{bot_row['bot_username']}" if bot_row["bot_username"] else (bot_row["display_name"] or f"Bot #{bot_id}")
+    await callback.message.edit_text(
+        f"🛠 <b>{html.escape(bot_label)}</b> — nimani almashtirmoqchisiz?\n\n"
+        f"<i>Diqqat: o'zgarish saqlangach bot avtomatik qayta build qilinib, ishga tushiriladi "
+        f"(agar hozir ishlab tursa, avval xavfsiz to'xtatiladi).</i>",
+        parse_mode="HTML",
+        reply_markup=edit_bot_menu_kb(bot_id, has_env=has_env),
+    )
+    await callback.answer()
+
+
 # ---------- Crash-fix oqimi: kodni almashtirish ----------
 
 @router.callback_query(F.data.startswith("fix_code:"))
@@ -554,13 +576,23 @@ async def fix_reqs_wrong_content_type(message: Message):
 
 
 async def _rebuild_and_start(bot_id: int, bot: Bot, message: Message):
-    """fix_code/fix_reqs oqimlaridan keyin umumiy qayta build+start logikasi —
+    """fix_code/fix_reqs/fix_env oqimlaridan keyin umumiy qayta build+start logikasi —
     cb_bot_rebuild bilan bir xil ketma-ketlik, lekin callback emas, oddiy xabar
-    orqali javob beradi (chunki bu yerda CallbackQuery yo'q, faqat Message)."""
+    orqali javob beradi (chunki bu yerda CallbackQuery yo'q, faqat Message).
+
+    DIQQAT: bu funksiya endi FAQAT crashed botlar uchun emas, balki ishlab
+    turgan (running) botni "🛠 Botni tahrirlash" orqali tahrirlaganda ham
+    ishlatiladi. Agar bot hozir running bo'lsa, avval eskisini TO'XTATAMIZ —
+    aks holda eski va yangi jarayon parallel ishlab, ikkitasi ham bitta
+    Telegram token bilan polling qilib, konflikt (yoki ikki barobar RAM
+    sarfi) yaratib qo'yishi mumkin edi."""
     bot_row = db.get_bot(bot_id)
     if bot_row is None:
         return
     bot_label = f"@{bot_row['bot_username']}" if bot_row["bot_username"] else (bot_row["display_name"] or f"Bot #{bot_id}")
+
+    if bot_row["status"] == "running" and is_running(bot_id):
+        await asyncio.to_thread(stop_bot_process, bot_id)
 
     allowed, used_mb, budget_mb = can_start_new_bot()
     if not allowed:
