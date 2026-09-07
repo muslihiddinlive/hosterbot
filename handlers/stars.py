@@ -25,7 +25,7 @@ from config import is_admin
 from states import StarsTopUp
 from keyboards import hisob_kb, cancel_kb, main_menu_kb
 from services.deploy_manager import start_bot_process, is_running
-from services.resource_monitor import can_start_new_bot
+from services.resource_monitor import can_start_new_bot, format_ram_limit_message
 
 router = Router()
 
@@ -198,9 +198,9 @@ async def cb_stars_extend(callback: CallbackQuery, bot: Bot):
     if bot_row["status"] != "running" or not is_running(bot_id):
         allowed, used_mb, budget_mb = can_start_new_bot()
         if not allowed:
+            ram_note = format_ram_limit_message(callback.from_user.id, used_mb, budget_mb)
             await callback.answer(
-                f"⭐️ To'lov qabul qilindi va vaqt uzaytirildi, lekin server RAM byudjeti "
-                f"tugagani uchun hozircha qayta ishga tushirilmadi ({used_mb:.0f}/{budget_mb} MB).",
+                f"⭐️ To'lov qabul qilindi va vaqt uzaytirildi, lekin {ram_note.lstrip('⚠️ ')}",
                 show_alert=True,
             )
             return

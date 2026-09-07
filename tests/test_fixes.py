@@ -542,7 +542,12 @@ def test_rebuild_stops_running_bot_before_rebuilding(tmp_path, monkeypatch):
     monkeypatch.setattr(bot_actions_mod, "is_running", lambda bid: True)
     monkeypatch.setattr(bot_actions_mod, "can_start_new_bot", lambda: (False, 999, 1000))  # RAM to'la - build'gacha yetmasin
 
+    class FakeUser:
+        id = 1
+
     class FakeMessage:
+        from_user = FakeUser()
+
         async def answer(self, *args, **kwargs):
             pass
 
@@ -570,9 +575,37 @@ def test_rebuild_skips_stop_when_bot_not_running(tmp_path, monkeypatch):
     monkeypatch.setattr(bot_actions_mod, "is_running", lambda bid: False)
     monkeypatch.setattr(bot_actions_mod, "can_start_new_bot", lambda: (False, 999, 1000))
 
+    class FakeUser:
+        id = 1
+
     class FakeMessage:
+        from_user = FakeUser()
+
         async def answer(self, *args, **kwargs):
             pass
 
     asyncio.run(bot_actions_mod._rebuild_and_start(bot_id, bot=None, message=FakeMessage()))
     assert stop_calls == [], "crashed (allaqachon to'xtagan) bot uchun stop_bot_process chaqirilmasligi kerak"
+
+
+def test_format_ram_limit_message_hides_numbers_from_regular_user(monkeypatch):
+    # Xavfsizlik/maxfiylik talabi: server RAM byudjetining aniq raqamlari
+    # (masalan "242/420 MB") faqat superadminga ko'rinishi kerak — oddiy
+    # foydalanuvchi platformaning ichki server kuvvati haqida bilmasligi kerak.
+    import config
+    from services.resource_monitor import format_ram_limit_message
+
+    monkeypatch.setattr(config, "SUPERADMIN_IDS", {999})
+    # resource_monitor.py o'zi "from config import ... is_superadmin" qilgani
+    # uchun, is_superadmin funksiyasining o'zi ham SUPERADMIN_IDS'ni to'g'ri
+    # o'qishi kerak - u global o'zgaruvchiga to'g'ridan-to'g'ri murojaat qiladi.
+    import services.resource_monitor as rm_mod
+    monkeypatch.setattr(rm_mod, "is_superadmin", lambda uid: uid in {999})
+
+    regular_msg = format_ram_limit_message(user_id=1, used_mb=242, budget_mb=420)
+    superadmin_msg = format_ram_limit_message(user_id=999, used_mb=242, budget_mb=420)
+
+    assert "242" not in regular_msg
+    assert "420" not in regular_msg
+    assert "242" in superadmin_msg
+    assert "420" in superadmin_msg

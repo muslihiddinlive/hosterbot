@@ -9,11 +9,11 @@ from aiogram.types import CallbackQuery, Message, FSInputFile
 from aiogram.fsm.context import FSMContext
 
 import database as db
-from config import is_admin
+from config import is_admin, is_superadmin
 from states import ConfirmDelete, FixCode, FixRequirements, FixEnv
 from keyboards import bot_manage_kb, admin_bot_view_kb, cancel_kb, main_menu_kb, edit_bot_menu_kb
 from services.deploy_manager import start_bot_process, stop_bot_process, read_log_tail, is_running, format_log_block, run_build_command
-from services.resource_monitor import can_start_new_bot, bot_ram_mb
+from services.resource_monitor import can_start_new_bot, bot_ram_mb, format_ram_limit_message
 from services.file_utils import (
     cleanup_bot_files, write_env_file, extract_zip, resolve_project_root,
     normalize_requirements_filename, fix_all_py_encodings, fix_py_encoding,
@@ -95,8 +95,7 @@ async def cb_bot_start(callback: CallbackQuery, bot: Bot):
     allowed, used_mb, budget_mb = can_start_new_bot()
     if not allowed:
         await callback.answer(
-            f"⚠️ RAM byudjeti tugagan ({used_mb:.0f}/{budget_mb} MB band). "
-            f"Avval boshqa botni to'xtating.",
+            format_ram_limit_message(callback.from_user.id, used_mb, budget_mb, "Avval boshqa botni to'xtating."),
             show_alert=True,
         )
         return
@@ -152,8 +151,7 @@ async def cb_bot_rebuild(callback: CallbackQuery, bot: Bot):
     allowed, used_mb, budget_mb = can_start_new_bot()
     if not allowed:
         await callback.answer(
-            f"⚠️ RAM byudjeti tugagan ({used_mb:.0f}/{budget_mb} MB band). "
-            f"Avval boshqa botni to'xtating.",
+            format_ram_limit_message(callback.from_user.id, used_mb, budget_mb, "Avval boshqa botni to'xtating."),
             show_alert=True,
         )
         return
@@ -352,12 +350,13 @@ async def cb_bot_resource(callback: CallbackQuery):
         return
 
     ram_mb = bot_ram_mb(bot_id)
-    allowed, used_mb, budget_mb = can_start_new_bot()
-    await callback.answer(
-        f"💾 Bu bot: {ram_mb:.1f} MB RAM\n"
-        f"Server umumiy: {used_mb:.0f}/{budget_mb} MB band",
-        show_alert=True,
-    )
+    text = f"💾 Bu bot: {ram_mb:.1f} MB RAM"
+    # Server umumiy RAM byudjeti (masalan "242/420 MB band") platformaning ichki
+    # hisob-kitobi — oddiy foydalanuvchiga ko'rsatilmaydi, faqat superadmin uchun.
+    if is_superadmin(callback.from_user.id):
+        allowed, used_mb, budget_mb = can_start_new_bot()
+        text += f"\nServer umumiy: {used_mb:.0f}/{budget_mb} MB band"
+    await callback.answer(text, show_alert=True)
 
 
 @router.callback_query(F.data.startswith("bot_live_log:"))
@@ -596,7 +595,7 @@ async def _rebuild_and_start(bot_id: int, bot: Bot, message: Message):
 
     allowed, used_mb, budget_mb = can_start_new_bot()
     if not allowed:
-        await message.answer(f"⚠️ RAM byudjeti tugagan ({used_mb:.0f}/{budget_mb} MB band). Avval boshqa botni to'xtating.")
+        await message.answer(format_ram_limit_message(message.from_user.id, used_mb, budget_mb, "Avval boshqa botni to'xtating."))
         return
 
     normalize_requirements_filename(bot_row["code_path"])

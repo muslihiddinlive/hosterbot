@@ -15,7 +15,7 @@ byudjetga (TOTAL_RAM_BUDGET_MB) sig'ish-sig'maasligini tekshiradi.
 """
 import psutil
 
-from config import TOTAL_RAM_BUDGET_MB
+from config import TOTAL_RAM_BUDGET_MB, is_superadmin
 from services.deploy_manager import list_running_pids
 
 
@@ -79,3 +79,17 @@ def can_start_new_bot(safety_margin_mb: float = 60.0) -> tuple[bool, float, floa
     used = platform_ram_mb() + total_bots_ram_mb()
     allowed = (used + safety_margin_mb) <= TOTAL_RAM_BUDGET_MB
     return allowed, used, TOTAL_RAM_BUDGET_MB
+
+
+def format_ram_limit_message(user_id: int, used_mb: float, budget_mb: float, suffix: str = "") -> str:
+    """Server umumiy RAM byudjeti (masalan '242/420 MB band') platformaning ichki
+    hisob-kitobi va server kuvvatiga oid ma'lumot — oddiy foydalanuvchiga
+    ko'rsatilmaydi (bu bizning tomonimizdan biznikini yashirish qarori),
+    faqat superadmin haqiqiy raqamlarni ko'radi. Barcha handler'lar RAM
+    limitiga tegishli xabarni foydalanuvchiga ko'rsatishdan oldin shu
+    funksiya orqali o'tkazishi kerak."""
+    if is_superadmin(user_id):
+        base = f"⚠️ Server RAM byudjeti tugagan ({used_mb:.0f}/{budget_mb} MB band)."
+    else:
+        base = "⚠️ Hozir server band — biroz kuting yoki boshqa botingizni to'xtating."
+    return f"{base} {suffix}".strip()

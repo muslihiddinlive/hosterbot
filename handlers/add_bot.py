@@ -20,7 +20,7 @@ from services.file_utils import (
     detect_external_imports, detect_credentials,
 )
 from services.deploy_manager import run_build_command, start_bot_process, static_scan, read_log_tail, is_running, format_log_block
-from services.resource_monitor import can_start_new_bot
+from services.resource_monitor import can_start_new_bot, format_ram_limit_message
 from services.backup import backup_database
 from handlers.stars import format_remaining
 import time
@@ -464,10 +464,10 @@ async def finalize_deploy(message: Message, state: FSMContext, bot: Bot):
     if not allowed:
         db.set_bot_status(bot_id, "stopped")
         await backup_database(bot)
+        ram_note = format_ram_limit_message(message.from_user.id, used_mb, budget_mb)
         await message.answer(
             f"⚠️ <b>Bot build bo'ldi, lekin hozircha ishga tushirilmadi.</b>\n\n"
-            f"Serverning RAM byudjeti tugagan ({used_mb:.0f}/{budget_mb} MB band). "
-            f"Boshqa botni to'xtatib, keyin \"Mening botlarim\" bo'limidan qo'lda "
+            f"{ram_note} Boshqa botni to'xtatib, keyin \"Mening botlarim\" bo'limidan qo'lda "
             f"ishga tushirishingiz mumkin.",
             parse_mode="HTML",
         )
