@@ -857,3 +857,32 @@ async def test_build_user_view_returns_none_for_missing_user(tmp_path, monkeypat
     text, kb = await admin_panel_mod._build_user_view(999999, viewer_id=1)
     assert text is None
     assert kb is None
+
+
+def test_bot_link_html_makes_clickable_link_when_username_present():
+    from services.deploy_manager import bot_link_html
+    bot_row = {"bot_username": "mybot", "display_name": None}
+    result = bot_link_html(bot_row)
+    assert result == '<a href="https://t.me/mybot">@mybot</a>'
+
+
+def test_bot_link_html_falls_back_to_display_name_without_username():
+    from services.deploy_manager import bot_link_html
+    bot_row = {"bot_username": None, "display_name": "My Cool Bot"}
+    result = bot_link_html(bot_row)
+    assert result == "My Cool Bot"
+    assert "<a href" not in result
+
+
+def test_bot_link_html_falls_back_to_default_label_when_nothing_set():
+    from services.deploy_manager import bot_link_html
+    bot_row = {"bot_username": None, "display_name": None}
+    assert bot_link_html(bot_row) == "Nomsiz bot"
+
+
+def test_bot_link_html_escapes_special_chars_in_display_name_fallback():
+    from services.deploy_manager import bot_link_html
+    bot_row = {"bot_username": None, "display_name": "<script>alert(1)</script>"}
+    result = bot_link_html(bot_row)
+    assert "<script>" not in result
+    assert "&lt;script&gt;" in result

@@ -12,7 +12,7 @@ import database as db
 from config import is_admin, is_superadmin
 from states import ConfirmDelete, FixCode, FixRequirements, FixEnv, RenameBot
 from keyboards import bot_manage_kb, admin_bot_view_kb, cancel_kb, main_menu_kb, edit_bot_menu_kb
-from services.deploy_manager import start_bot_process, stop_bot_process, read_log_tail, is_running, format_log_block, run_build_command
+from services.deploy_manager import start_bot_process, stop_bot_process, read_log_tail, is_running, format_log_block, run_build_command, bot_link_html
 from services.resource_monitor import can_start_new_bot, bot_ram_mb, format_ram_limit_message
 from services.file_utils import (
     cleanup_bot_files, write_env_file, extract_zip, resolve_project_root,
@@ -151,7 +151,7 @@ async def cb_bot_start(callback: CallbackQuery, bot: Bot):
     bot_row = db.get_bot(bot_id)
 
     await callback.message.edit_text(
-        f"🤖 <b>{html.escape(bot_row['bot_username'] or bot_row['display_name'] or 'Nomsiz bot')}</b>\nHolati: 🟢 ishlayapti",
+        f"🤖 <b>{bot_link_html(bot_row)}</b>\nHolati: 🟢 ishlayapti",
         parse_mode="HTML", reply_markup=_refresh_kb(bot_row, callback),
     )
     await backup_database(bot)
@@ -261,7 +261,7 @@ async def cb_bot_stop(callback: CallbackQuery, bot: Bot):
     bot_row = db.get_bot(bot_id)
 
     await callback.message.edit_text(
-        f"🤖 <b>{html.escape(bot_row['bot_username'] or bot_row['display_name'] or 'Nomsiz bot')}</b>\nHolati: 🔴 to‘xtatilgan",
+        f"🤖 <b>{bot_link_html(bot_row)}</b>\nHolati: 🔴 to‘xtatilgan",
         parse_mode="HTML", reply_markup=_refresh_kb(bot_row, callback),
     )
     await backup_database(bot)
@@ -340,7 +340,7 @@ async def cb_bot_info(callback: CallbackQuery, bot: Bot):
         logs = read_log_tail(bot_row["code_path"])
 
         info_text = (
-            f"ℹ️ <b>{html.escape(bot_row['bot_username'] or bot_row['display_name'] or 'Nomsiz bot')}</b>\n\n"
+            f"ℹ️ <b>{bot_link_html(bot_row)}</b>\n\n"
             f"Til: {html.escape(bot_row['language'] or '-')}\n"
             f"Build: <code>{html.escape(bot_row['build_cmd'] or '-')}</code>\n"
             f"Start: <code>{html.escape(bot_row['start_cmd'] or '-')}</code>\n\n"

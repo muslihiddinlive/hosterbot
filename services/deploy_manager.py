@@ -248,6 +248,21 @@ def read_log_tail(workdir: str, n_lines: int = 60) -> str:
     return "".join(lines[-n_lines:]) or "Log bo'sh."
 
 
+def bot_link_html(bot_row) -> str:
+    """Bot sarlavhasi sifatida ishlatiladigan HTML matn — agar botning o'z
+    Telegram username'i bo'lsa (bot_username), t.me/username ga bosiladigan
+    link qilib qaytaradi (masalan '@mybot' matnida), aks holda display_name
+    yoki 'Nomsiz bot' oddiy (escape qilingan) matn sifatida qaytadi.
+
+    DIQQAT: bu faqat oddiy xabar matnlarida ishlatiladi — <pre> bloklari
+    ichida (masalan format_log_block) Telegram <a> teglarni render qilmaydi,
+    shu sabab u yerlarda bu funksiya ishlatilmaydi."""
+    if bot_row["bot_username"]:
+        username_esc = html.escape(bot_row["bot_username"])
+        return f'<a href="https://t.me/{bot_row["bot_username"]}">@{username_esc}</a>'
+    return html.escape(bot_row["display_name"] or "Nomsiz bot")
+
+
 def format_log_block(label: str, content: str, max_chars: int = 3500) -> str:
     """
     Bot nomi (@username yoki nom) va log/xato matnini BITTA yaxlit <pre> blokiga

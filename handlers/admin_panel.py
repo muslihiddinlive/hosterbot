@@ -16,7 +16,7 @@ import database as db
 from config import is_admin, is_superadmin, STORAGE_GROUP_ID, ADMIN_IDS, SUPERADMIN_IDS, MAX_BOTS_PER_USER
 from states import AdminMessageUser, AdminSetLimit, AdminStarsSetting, AdminBanCustomHours, AdminBroadcast, AdminTestDeploy, AdminSearchUser, AdminAIProvider
 from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb, admin_gift_list_kb, admin_self_gift_list_kb, admin_ban_choice_kb, admin_broadcast_confirm_kb, admin_sender_choice_kb, admin_ai_providers_kb, admin_ai_provider_view_kb, admin_ai_provider_kind_kb, admin_ai_cloudflare_model_kb, admin_search_choice_kb, admin_search_qwerty_kb
-from services.deploy_manager import stop_bot_process, start_bot_process, run_build_command, is_running, read_log_tail
+from services.deploy_manager import stop_bot_process, start_bot_process, run_build_command, is_running, read_log_tail, bot_link_html
 from services.file_utils import bot_workdir
 from services.resource_monitor import can_start_new_bot, bot_ram_mb
 from aiogram.exceptions import TelegramBadRequest
@@ -353,10 +353,9 @@ async def _build_user_view(telegram_id: int, viewer_id: int):
         icon = {"running": "🟢", "crashed": "🟡", "stopped": "🔴"}
         status_word = {"running": "ishlayapti", "crashed": "qulagan", "stopped": "to'xtatilgan"}
         for b in bots:
-            label = b["bot_username"] or b["display_name"] or f"Bot #{b['bot_id']}"
             deployed = datetime.fromtimestamp(b["created_at"]).strftime("%Y-%m-%d")
             line = (
-                f"{icon.get(b['status'], '❓')} <b>{html.escape(label)}</b> — "
+                f"{icon.get(b['status'], '❓')} <b>{bot_link_html(b)}</b> — "
                 f"{status_word.get(b['status'], b['status'])}"
             )
             if b["language"]:
@@ -787,7 +786,7 @@ async def cb_admin_bot_view(callback: CallbackQuery):
         return
 
     text = (
-        f"🤖 <b>{html.escape(bot_row['bot_username'] or bot_row['display_name'] or 'Nomsiz bot')}</b>\n"
+        f"🤖 <b>{bot_link_html(bot_row)}</b>\n"
         f"Holati: {'🟢 ishlayapti' if bot_row['status'] == 'running' else '🔴 to‘xtatilgan'}\n"
         f"Owner ID: <code>{bot_row['owner_id']}</code>\n"
         f"Til: {html.escape(bot_row['language'] or '-')}"

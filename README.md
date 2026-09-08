@@ -107,6 +107,13 @@ ko'rsatiladi: har bir botning holati, tili, deploy sanasi, joriy RAM sarfi (ishl
 turgan bo'lsa), Stars orqali hostlangan bo'lsa muddat, va limit qatori ("2/5 bot" —
 individual yoki global limit ekanligi bilan).
 
+Bot sarlavhasi (agar botning o'z Telegram username'i bo'lsa) `services.deploy_manager.bot_link_html()`
+orqali `t.me/username` ga bosiladigan link qilib ko'rsatiladi — admin/superadmin uchun
+(bot boshqarish, "Bot haqida", foydalanuvchi profili) HAM, botning egasi uchun ("Mening
+botlarim" ichida bot boshqarish sahifasi) HAM bir xil ishlaydi. `<pre>` bloklari ichida
+(masalan crash log xabarlari, `format_log_block`) link ishlatilmaydi — Telegram u yerda
+`<a>` teglarni render qilmaydi, faqat oddiy matn ko'rsatadi.
+
 - `services/deploy_manager.py` — subprocess orqali botlarni ishga tushirish, RAM limiti
 - `services/file_utils.py` — zip/py fayllarni aniqlash va joylashtirish
 - `database.py` — SQLite (users, bots, bot_envs)

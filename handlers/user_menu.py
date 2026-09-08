@@ -10,7 +10,7 @@ import database as db
 from config import is_admin, is_superadmin
 from states import ContactAdmin
 from keyboards import cancel_kb, my_bots_list_kb, bot_manage_kb, admin_panel_kb
-from services.deploy_manager import is_running, stop_bot_process
+from services.deploy_manager import is_running, stop_bot_process, bot_link_html
 from services.resource_monitor import bot_ram_mb, total_bots_ram_mb, platform_ram_mb, can_start_new_bot
 from services.backup import backup_database
 from handlers.bot_actions import _start_single_bot
@@ -143,7 +143,7 @@ async def manage_bot(callback: CallbackQuery):
     age_line = f"Deploy qilingan: {_format_uptime(time.time() - bot_row['created_at'])} oldin"
 
     text = (
-        f"🤖 <b>{html.escape(bot_row['bot_username'] or bot_row['display_name'] or 'Nomsiz bot')}</b>\n"
+        f"🤖 <b>{bot_link_html(bot_row)}</b>\n"
         f"Holati: {status_line}\n"
         f"Til: {html.escape(bot_row['language'] or '-')}\n"
         f"{age_line}"
