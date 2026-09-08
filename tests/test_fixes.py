@@ -886,3 +886,31 @@ def test_bot_link_html_escapes_special_chars_in_display_name_fallback():
     result = bot_link_html(bot_row)
     assert "<script>" not in result
     assert "&lt;script&gt;" in result
+
+
+def test_crash_diagnosis_prompt_forbids_terminal_advice():
+    # Asosiy fix: AI avval "pip install qiling", "terminalni oching" kabi
+    # foydalanuvchi uchun bajarib bo'lmaydigan (terminal yo'q) maslahatlar
+    # berardi. System prompt endi bunday maslahatlarni ANIQ taqiqlashi kerak.
+    from services.ai_client import build_crash_diagnosis_prompt
+    system_prompt, _ = build_crash_diagnosis_prompt("@testbot", "some log")
+    assert "pip install" in system_prompt  # misol sifatida tilga olingan (taqiqlangan namuna)
+    assert "terminal" in system_prompt.lower()
+    assert "HECH QANDAY" in system_prompt or "taqiqlangan" in system_prompt.lower()
+
+
+def test_crash_diagnosis_prompt_mentions_actual_bot_buttons():
+    # System prompt AI'ga haqiqiy tuzatish mexanizmlarini (botdagi tugmalar)
+    # aytishi kerak - shu tugma nomlari bot_actions.py/keyboards.py'dagi
+    # haqiqiy tugma matnlari bilan bir xil bo'lishi kerak.
+    from services.ai_client import build_crash_diagnosis_prompt
+    system_prompt, _ = build_crash_diagnosis_prompt("@testbot", "some log")
+    assert "requirements.txt almashtirish" in system_prompt
+    assert "Kodni almashtirish" in system_prompt
+    assert "ENV tahrirlash" in system_prompt
+
+
+def test_crash_diagnosis_prompt_mentions_telegram_only_context():
+    from services.ai_client import build_crash_diagnosis_prompt
+    system_prompt, _ = build_crash_diagnosis_prompt("@testbot", "some log")
+    assert "Telegram" in system_prompt

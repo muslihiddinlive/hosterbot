@@ -101,14 +101,35 @@ async def ask_ai(system_prompt: str, user_prompt: str, telegram_id: int, bot_id:
 def build_crash_diagnosis_prompt(bot_label: str, log_text: str, code_snippet: str = "") -> tuple[str, str]:
     """Crash tashxis so'rovi uchun system+user promptlarni tayyorlaydi.
     Log matni oxirgi ~2000 belgigacha qisqartiriladi (token sarfini kamaytirish uchun) —
-    odatda xato haqidagi eng muhim ma'lumot (traceback) log oxirida bo'ladi."""
+    odatda xato haqidagi eng muhim ma'lumot (traceback) log oxirida bo'ladi.
+
+    DIQQAT: AI dastlab "sizning kompyuteringizda pip install qiling" kabi
+    umumiy dasturchi maslahatlari berardi — bu FOYDALANUVCHIGA MA'NOSIZ, chunki
+    u faqat Telegram orqali ishlaydi, hech qanday terminal/kompyuter kirish
+    huquqi yo'q. System prompt shu sababli platformaning haqiqiy muhitini va
+    haqiqiy tuzatish mexanizmlarini (botdagi tugmalar) aniq tushuntiradi."""
     system_prompt = (
-        "Siz Telegram bot hosting platformasidagi yordamchi diagnostsiz. Foydalanuvchi o'zi "
-        "yuklagan bot kodi ishga tushmay qulab tushdi (crashed). Sizga oxirgi log va (bo'lsa) "
-        "kod parchasi beriladi. Vazifangiz: xato sababini ODDIY, tushunarli o'zbek tilida "
-        "tushuntirish va ANIQ, amaliy tuzatish qadamlarini berish. Texnik jargon ishlatmang, "
-        "har bir tavsiyani oddiy foydalanuvchi (dasturchi bo'lmasligi mumkin) tushunadigan "
-        "qilib yozing. Javobni 200-300 so'zdan oshirmang."
+        "Siz 'HosterBot' nomli Telegram-orqali-boshqariladigan bot hosting platformasidagi "
+        "yordamchi diagnostsiz. MUHIM KONTEKST: foydalanuvchi kodini FAQAT Telegram orqali "
+        "yuklaydi va bot serverda (bulutda) avtomatik ishga tushiriladi — foydalanuvchida "
+        "HECH QANDAY terminal, komanda qatori yoki kompyuteriga kirish huquqi yo'q. Shu sabab:\n\n"
+        "QAT'IY TAQIQLANGAN maslahatlar (bularni HECH QACHON yozmang, chunki ular "
+        "foydalanuvchi uchun bajarib bo'lmaydi): 'terminalni oching', "
+        "'pip install ... buyrug'ini yozing', 'python fayl.py bilan ishga tushiring', "
+        "'virtual muhitni faollashtiring (venv/source activate)', "
+        "'papkaga o'ting (cd)', yoki boshqa har qanday komanda-qatoriga oid ko'rsatma.\n\n"
+        "Buning o'rniga, xato turiga qarab FAQAT quyidagi Telegram bot tugmalaridan mos "
+        "kelganini tavsiya qiling (bot interfeysida bot boshqaruv sahifasida mavjud):\n"
+        "- ModuleNotFoundError / kutubxona yetishmasa -> '📋 requirements.txt almashtirish' "
+        "tugmasi orqali yetishmagan kutubxona nomini requirements.txt fayliga qo'shib qayta yuborish\n"
+        "- Kod ichida xato (SyntaxError, mantiqiy xato, noto'g'ri yozilgan qism) -> "
+        "'📄 Kodni almashtirish' tugmasi orqali tuzatilgan .py faylni qayta yuborish\n"
+        "- Token/API kalit/ENV qiymati noto'g'ri yoki yo'q -> '🔑 ENV tahrirlash' tugmasi\n"
+        "- Fayl formatidagi xato (masalan .py.txt) -> to'g'ri kengaytmali faylni qayta yuborish\n\n"
+        "Vazifangiz: xato sababini ODDIY, tushunarli o'zbek tilida tushuntirish va yuqoridagi "
+        "ro'yxatdan ANIQ qaysi tugmani bosish kerakligini aytish. Texnik jargon ishlatmang, "
+        "oddiy foydalanuvchi (dasturchi bo'lmasligi mumkin) tushunadigan qilib yozing. "
+        "Javobni 200-300 so'zdan oshirmang."
     )
     truncated_log = log_text[-2000:] if len(log_text) > 2000 else log_text
     user_prompt = f"Bot: {bot_label}\n\nOxirgi log:\n{truncated_log}"

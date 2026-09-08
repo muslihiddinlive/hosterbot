@@ -73,6 +73,12 @@ Faqat **crashed** holatda qo'shimcha ravishda:
   parchasini `services/ai_client.py` orqali sozlangan AI provayderlardan biriga yuborib, oddiy tilda
   tashxis va tuzatish tavsiyasi oladi.
 
+**MUHIM**: `build_crash_diagnosis_prompt()`dagi system prompt AI'ga aniq aytadiki, foydalanuvchi
+FAQAT Telegram orqali ishlaydi — hech qanday terminal/kompyuter kirish huquqi yo'q. Shu sabab AI
+"pip install qiling", "terminalni oching" kabi bajarib bo'lmaydigan maslahatlar bermaydi, faqat
+haqiqiy botdagi tugmalarni ("📋 requirements.txt almashtirish", "📄 Kodni almashtirish", "🔑 ENV
+tahrirlash") tavsiya qiladi.
+
 Superadmin **"🤖 AI provayderlar"** bo'limidan istalgan sondagi OpenAI-compatible endpoint
 (Cloudflare Workers AI, OpenRouter va h.k.) qo'sha oladi — har birining o'z kunlik so'rov
 limiti va ustuvorlik darajasi bor. Bitta provayder kunlik limitga yetsa, tizim avtomatik
