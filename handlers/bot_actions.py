@@ -828,7 +828,20 @@ async def cb_ai_help(callback: CallbackQuery, bot: Bot):
     except Exception:
         pass  # kod parchasini o'qib bo'lmasa ham, log bilan tashxis qo'yishga urinamiz
 
-    system_prompt, user_prompt = build_crash_diagnosis_prompt(bot_label, log_text, code_snippet)
+    # requirements.txt ham AI'ga beriladi — aks holda AI "kutubxona yo'q" desa
+    # ham, o'sha kutubxona aslida requirements.txt'da bor-yo'qligini bilmasdan
+    # taxmin qilardi (masalan nom xato yozilgan yoki versiya nomuvofiqligi
+    # bo'lgan holatlarda noto'g'ri tashxis qo'yishi mumkin edi).
+    requirements_text = ""
+    try:
+        requirements_path = os.path.join(bot_row["code_path"], "requirements.txt")
+        if os.path.isfile(requirements_path):
+            with open(requirements_path, "r", encoding="utf-8", errors="ignore") as f:
+                requirements_text = f.read()
+    except Exception:
+        pass
+
+    system_prompt, user_prompt = build_crash_diagnosis_prompt(bot_label, log_text, code_snippet, requirements_text)
 
     try:
         diagnosis = await ask_ai(system_prompt, user_prompt, telegram_id=owner_id, bot_id=bot_id)

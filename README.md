@@ -69,15 +69,18 @@ eski va yangi jarayon parallel ishlab, bitta Telegram token bilan konflikt yarat
 
 Faqat **crashed** holatda qo'shimcha ravishda:
 - **🔁 Qayta build qilib urinish** — oddiy "Ishga tushirish"dan farqli, build bosqichini ham qayta bajaradi.
-- **🤖 AI yordam** (Stars bilan to'lanadi, narxi superadmin panelidan sozlanadi, default 5⭐) — log va kod
-  parchasini `services/ai_client.py` orqali sozlangan AI provayderlardan biriga yuborib, oddiy tilda
-  tashxis va tuzatish tavsiyasi oladi.
+- **🤖 AI yordam** (Stars bilan to'lanadi, narxi superadmin panelidan sozlanadi, default 5⭐) — AI'ga
+  uchta manba birdan beriladi: oxirgi **log**, asosiy **.py fayl** (`start_cmd`da ko'rsatilgan) va
+  **requirements.txt** tarkibi (agar bo'lsa). Shu asosda oddiy tilda tashxis va tuzatish tavsiyasi oladi.
 
 **MUHIM**: `build_crash_diagnosis_prompt()`dagi system prompt AI'ga aniq aytadiki, foydalanuvchi
 FAQAT Telegram orqali ishlaydi — hech qanday terminal/kompyuter kirish huquqi yo'q. Shu sabab AI
 "pip install qiling", "terminalni oching" kabi bajarib bo'lmaydigan maslahatlar bermaydi, faqat
 haqiqiy botdagi tugmalarni ("📋 requirements.txt almashtirish", "📄 Kodni almashtirish", "🔑 ENV
-tahrirlash") tavsiya qiladi.
+tahrirlash") tavsiya qiladi. Shuningdek, prompt AI'ga requirements.txt'ni log bilan solishtirib
+tekshirishni buyuradi — agar "ModuleNotFoundError" chiqsa-yu, o'sha kutubxona requirements.txt'da
+ALLAQACHON bor bo'lsa, AI buni "kutubxona yo'q" deb noto'g'ri tashxis qo'ymasligi kerak (masalan
+nom xato yozilgan yoki versiya nomuvofiqligi bo'lishi mumkin).
 
 Superadmin **"🤖 AI provayderlar"** bo'limidan istalgan sondagi OpenAI-compatible endpoint
 (Cloudflare Workers AI, OpenRouter va h.k.) qo'sha oladi — har birining o'z kunlik so'rov

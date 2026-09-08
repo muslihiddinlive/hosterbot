@@ -914,3 +914,42 @@ def test_crash_diagnosis_prompt_mentions_telegram_only_context():
     from services.ai_client import build_crash_diagnosis_prompt
     system_prompt, _ = build_crash_diagnosis_prompt("@testbot", "some log")
     assert "Telegram" in system_prompt
+
+
+def test_crash_diagnosis_prompt_includes_requirements_when_provided():
+    from services.ai_client import build_crash_diagnosis_prompt
+    _, user_prompt = build_crash_diagnosis_prompt(
+        "@testbot", "some log", requirements_text="aiogram==3.4.1\nrequests"
+    )
+    assert "aiogram==3.4.1" in user_prompt
+    assert "requests" in user_prompt
+
+
+def test_crash_diagnosis_prompt_notes_missing_requirements_explicitly():
+    # AI requirements.txt yo'qligini ANIQ bilishi kerak (bo'sh string emas,
+    # balki "yo'q" deb aytilishi) - aks holda AI buni "bo'sh matn keldi,
+    # ehtimol o'qib bo'lmadi" deb noto'g'ri talqin qilishi mumkin.
+    from services.ai_client import build_crash_diagnosis_prompt
+    _, user_prompt = build_crash_diagnosis_prompt("@testbot", "some log", requirements_text="")
+    assert "requirements.txt fayli yo'q" in user_prompt
+
+
+def test_crash_diagnosis_prompt_instructs_ai_to_cross_check_requirements():
+    # System prompt AI'ga requirements.txt'ni tekshirib, ModuleNotFoundError
+    # bo'lsa ham kutubxona aslida bor bo'lishi mumkinligini hisobga olishni
+    # aytishi kerak (noto'g'ri "kutubxona yo'q" tashxisining oldini olish uchun).
+    from services.ai_client import build_crash_diagnosis_prompt
+    system_prompt, _ = build_crash_diagnosis_prompt("@testbot", "some log")
+    assert "requirements.txt" in system_prompt
+    assert "ALLAQACHON bor" in system_prompt
+
+
+def test_crash_diagnosis_prompt_truncates_long_requirements():
+    from services.ai_client import build_crash_diagnosis_prompt
+    long_requirements = "package\n" * 500  # ~4000 belgi
+    _, user_prompt = build_crash_diagnosis_prompt(
+        "@testbot", "log", requirements_text=long_requirements
+    )
+    # requirements.txt qismi 800 belgigacha qisqartirilishi kerak
+    requirements_section = user_prompt.split("requirements.txt tarkibi:")[1]
+    assert len(requirements_section) < 900

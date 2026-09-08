@@ -98,7 +98,8 @@ async def ask_ai(system_prompt: str, user_prompt: str, telegram_id: int, bot_id:
     raise AIError("Barcha AI provayderlar bugungi kunlik limitga yetgan — ertaga qayta urinib ko'ring.")
 
 
-def build_crash_diagnosis_prompt(bot_label: str, log_text: str, code_snippet: str = "") -> tuple[str, str]:
+def build_crash_diagnosis_prompt(bot_label: str, log_text: str, code_snippet: str = "",
+                                  requirements_text: str = "") -> tuple[str, str]:
     """Crash tashxis so'rovi uchun system+user promptlarni tayyorlaydi.
     Log matni oxirgi ~2000 belgigacha qisqartiriladi (token sarfini kamaytirish uchun) —
     odatda xato haqidagi eng muhim ma'lumot (traceback) log oxirida bo'ladi.
@@ -107,7 +108,13 @@ def build_crash_diagnosis_prompt(bot_label: str, log_text: str, code_snippet: st
     umumiy dasturchi maslahatlari berardi — bu FOYDALANUVCHIGA MA'NOSIZ, chunki
     u faqat Telegram orqali ishlaydi, hech qanday terminal/kompyuter kirish
     huquqi yo'q. System prompt shu sababli platformaning haqiqiy muhitini va
-    haqiqiy tuzatish mexanizmlarini (botdagi tugmalar) aniq tushuntiradi."""
+    haqiqiy tuzatish mexanizmlarini (botdagi tugmalar) aniq tushuntiradi.
+
+    requirements_text — botning requirements.txt tarkibi (agar bo'lsa). Buni
+    bermasak, AI "kutubxona yetishmayapti" desa ham, u aslida requirements.txt'da
+    bor-yo'qligini bilmasdan taxmin qilardi (masalan versiya nomuvofiqligi yoki
+    noto'g'ri yozilgan nom sabab bo'lgan holatlarda noto'g'ri tashxis qo'yishi
+    mumkin edi)."""
     system_prompt = (
         "Siz 'HosterBot' nomli Telegram-orqali-boshqariladigan bot hosting platformasidagi "
         "yordamchi diagnostsiz. MUHIM KONTEKST: foydalanuvchi kodini FAQAT Telegram orqali "
@@ -126,6 +133,11 @@ def build_crash_diagnosis_prompt(bot_label: str, log_text: str, code_snippet: st
         "'📄 Kodni almashtirish' tugmasi orqali tuzatilgan .py faylni qayta yuborish\n"
         "- Token/API kalit/ENV qiymati noto'g'ri yoki yo'q -> '🔑 ENV tahrirlash' tugmasi\n"
         "- Fayl formatidagi xato (masalan .py.txt) -> to'g'ri kengaytmali faylni qayta yuborish\n\n"
+        "Sizga log, kod va (bo'lsa) requirements.txt beriladi — requirements.txt'ni albatta "
+        "tekshiring: agar xato 'ModuleNotFoundError' bo'lsa-yu, o'sha kutubxona requirements.txt'da "
+        "ALLAQACHON bor bo'lsa, muammo kutubxona yo'qligida emas — balki nom xato yozilgan, versiya "
+        "nomuvofiqligi, yoki requirements.txt umuman ishlatilmagan bo'lishi mumkin, shunga qarab "
+        "tashxis bering.\n\n"
         "Vazifangiz: xato sababini ODDIY, tushunarli o'zbek tilida tushuntirish va yuqoridagi "
         "ro'yxatdan ANIQ qaysi tugmani bosish kerakligini aytish. Texnik jargon ishlatmang, "
         "oddiy foydalanuvchi (dasturchi bo'lmasligi mumkin) tushunadigan qilib yozing. "
@@ -133,6 +145,10 @@ def build_crash_diagnosis_prompt(bot_label: str, log_text: str, code_snippet: st
     )
     truncated_log = log_text[-2000:] if len(log_text) > 2000 else log_text
     user_prompt = f"Bot: {bot_label}\n\nOxirgi log:\n{truncated_log}"
+    if requirements_text:
+        user_prompt += f"\n\nrequirements.txt tarkibi:\n{requirements_text[:800]}"
+    else:
+        user_prompt += "\n\nrequirements.txt: bu botda requirements.txt fayli yo'q (yoki bo'sh)."
     if code_snippet:
         user_prompt += f"\n\nKod parchasi (agar tegishli bo'lsa):\n{code_snippet[:1500]}"
     return system_prompt, user_prompt
