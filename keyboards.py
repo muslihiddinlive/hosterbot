@@ -264,12 +264,66 @@ def admin_panel_kb(is_superadmin: bool = False) -> InlineKeyboardMarkup:
 
 def admin_users_kb(users) -> InlineKeyboardMarkup:
     status_icon = {"approved": "✅", "pending": "⏳", "denied": "⛔️"}
-    rows = [[InlineKeyboardButton(text="🔍 Qidirish (ID yoki username)", callback_data="admin_search_user_ask")]]
+    rows = [[InlineKeyboardButton(text="🔍 Qidirish", callback_data="admin_search_choice")]]
     for u in users:
         label = f"@{u['username']}" if u["username"] else (u["first_name"] or str(u["telegram_id"]))
         icon = "🚫" if u["is_banned"] else status_icon.get(u["status"], "❓")
         rows.append([InlineKeyboardButton(text=f"{icon} {label}", callback_data=f"admin_user_view:{u['telegram_id']}")])
     rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_panel_back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_search_choice_kb() -> InlineKeyboardMarkup:
+    """'🔍 Qidirish' bosilganda ochiladigan birinchi tanlov — ID orqali (matn
+    kiritish, mavjud oqim) yoki harflab (inline QWERTY, matn kiritmasdan)."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔢 ID orqali", callback_data="admin_search_by_id")],
+        [InlineKeyboardButton(text="🔤 Harflab qidirish (ism/username)", callback_data="admin_search_qwerty:")],
+        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_users")],
+    ])
+
+
+_QWERTY_ROWS = ["qwertyuiop", "asdfghjkl", "zxcvbnm"]
+
+
+def admin_search_qwerty_kb(current_query: str, matches) -> InlineKeyboardMarkup:
+    """Inline QWERTY qidiruv klaviaturasi — foydalanuvchi harflarni bittalab
+    bosadi, har bosishda 'current_query' o'sadi va mos foydalanuvchilar
+    (matches) darhol pastda ko'rinadi (real-time filter, alohida 'Qidirish'
+    tugmasini bosishga hojat yo'q). callback_data'ga to'planган matn to'liq
+    yozilgani uchun (masalan 'admin_search_qwerty:ali'), Telegram callback_data
+    64 bayt limitiga sig'ishi uchun qidiruv so'zi ~50 belgidan oshmasligi kerak
+    — amalda ism/username uchun bu yetarli."""
+    rows = []
+
+    # Topilgan foydalanuvchilar — QWERTY tugmalaridan yuqorida, har doim ko'rinadi
+    for u in matches:
+        label = f"@{u['username']}" if u["username"] else (u["first_name"] or str(u["telegram_id"]))
+        rows.append([InlineKeyboardButton(text=f"👤 {label}", callback_data=f"admin_user_view:{u['telegram_id']}")])
+
+    # Telegram callback_data 64 baytdan oshmasligi kerak. Prefiks
+    # "admin_search_qwerty:" o'zi ~20 bayt, shu sabab qidiruv so'zini
+    # xavfsiz chegara (35 belgi) bilan cheklaymiz — undan uzun ism/username
+    # amalda deyarli uchramaydi.
+    MAX_QUERY_LEN = 35
+    for row_letters in _QWERTY_ROWS:
+        row = []
+        for letter in row_letters:
+            next_query = current_query + letter
+            if len(next_query) > MAX_QUERY_LEN:
+                # Chegaraga yetgan bo'lsa, harf tugmasi bosilganda hech narsa
+                # o'zgarmasin (joriy so'rovning o'ziga qaytadi) — xato chiqarish
+                # o'rniga jimgina cheklaymiz.
+                next_query = current_query
+            row.append(InlineKeyboardButton(text=letter, callback_data=f"admin_search_qwerty:{next_query}"))
+        rows.append(row)
+
+    control_row = []
+    if current_query:
+        control_row.append(InlineKeyboardButton(text="⌫ O'chirish", callback_data=f"admin_search_qwerty_bs:{current_query}"))
+    control_row.append(InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_search_choice"))
+    rows.append(control_row)
+
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

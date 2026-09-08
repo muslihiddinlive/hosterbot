@@ -91,6 +91,16 @@ Superadmin panelida **"📊 Umumiy statistika"** bo'limi bor (`db.get_dashboard_
 foydalanuvchilar (jami/tasdiqlangan/kutayotgan/ban), botlar (jami/ishlayotgan/qulagan),
 bugungi va oxirgi 7 kunlik deploy soni, umr bo'yi to'langan Stars, bugungi AI so'rovlari
 soni, va real vaqtda hisoblangan eng ko'p RAM yeyotgan top-5 bot.
+
+### Foydalanuvchi qidirish (ID yoki harflab)
+
+Admin panelidagi "👥 Foydalanuvchilar" bo'limida "🔍 Qidirish" ikkita usulni taklif qiladi:
+- **🔢 ID orqali** — mavjud oqim, Telegram ID yoki to'liq `@username` matn sifatida yuboriladi.
+- **🔤 Harflab qidirish** — inline QWERTY klaviatura (`admin_search_qwerty_kb`): admin
+  harflarni bittalab bosadi, har bosishda so'rov o'sadi va mos foydalanuvchilar (username
+  yoki ism boshi bo'yicha, `db.search_users_by_prefix`) darhol yuqorida ko'rinadi — matn
+  kiritishga umuman hojat yo'q, bu ayniqsa mobil qurilmada qulay.
+
 - `services/deploy_manager.py` — subprocess orqali botlarni ishga tushirish, RAM limiti
 - `services/file_utils.py` — zip/py fayllarni aniqlash va joylashtirish
 - `database.py` — SQLite (users, bots, bot_envs)

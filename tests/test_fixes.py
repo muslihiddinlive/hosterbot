@@ -705,3 +705,97 @@ def test_get_dashboard_stats_excludes_deleted_bots(tmp_path, monkeypatch):
     db_mod.delete_bot(bot_id)
     stats = db_mod.get_dashboard_stats()
     assert stats["total_bots"] == 0
+
+
+def test_search_users_by_prefix_matches_username_and_first_name(tmp_path, monkeypatch):
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    db_mod.upsert_user(telegram_id=1, username="alisher_dev", first_name="Alisher")
+    db_mod.upsert_user(telegram_id=2, username="botmaster", first_name="Ali")
+    db_mod.upsert_user(telegram_id=3, username="somebody", first_name="Vali")
+
+    by_username = db_mod.search_users_by_prefix("alish")
+    assert {u["telegram_id"] for u in by_username} == {1}
+
+    by_first_name = db_mod.search_users_by_prefix("ali")
+    # "alisher_dev" (username "ali..." emas, lekin first_name "Alisher" ali bilan
+    # boshlanadi) va "botmaster" (first_name "Ali") ikkalasi ham mos kelishi kerak
+    assert {u["telegram_id"] for u in by_first_name} == {1, 2}
+
+
+def test_search_users_by_prefix_case_insensitive(tmp_path, monkeypatch):
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    db_mod.upsert_user(telegram_id=1, username="AliYor", first_name="Ali")
+    matches = db_mod.search_users_by_prefix("aliy")
+    assert len(matches) == 1
+    assert matches[0]["telegram_id"] == 1
+
+
+def test_search_users_by_prefix_empty_query_returns_empty(tmp_path, monkeypatch):
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    db_mod.upsert_user(telegram_id=1, username="someone", first_name="Someone")
+    assert db_mod.search_users_by_prefix("") == []
+    assert db_mod.search_users_by_prefix("   ") == []
+
+
+def test_search_users_by_prefix_escapes_sql_wildcards(tmp_path, monkeypatch):
+    # "%" va "_" SQL LIKE uchun maxsus belgilar — agar qidiruv so'zida
+    # tasodifan shu belgilar bo'lsa (masalan username'da), ular literal
+    # belgi sifatida qidirilishi kerak, wildcard sifatida emas.
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    db_mod.upsert_user(telegram_id=1, username="test_user", first_name="Test")
+    db_mod.upsert_user(telegram_id=2, username="testXuser", first_name="Test2")
+    # "_" ni wildcard sifatida talqin qilsa, "test_user" VA "testXuser"
+    # ikkalasi ham mos kelardi (chunki "_" har qanday bitta belgiga mos keladi).
+    # ESCAPE bilan faqat "test_user" mos kelishi kerak.
+    matches = db_mod.search_users_by_prefix("test_")
+    assert {u["telegram_id"] for u in matches} == {1}
+
+
+def test_admin_search_qwerty_kb_has_three_letter_rows_and_matches_on_top():
+    from keyboards import admin_search_qwerty_kb
+    fake_matches = [{"telegram_id": 42, "username": "aliyor", "first_name": "Ali"}]
+    kb = admin_search_qwerty_kb("ali", fake_matches)
+
+    # Birinchi qator - topilgan foydalanuvchi
+    assert kb.inline_keyboard[0][0].callback_data == "admin_user_view:42"
+
+    # Keyingi 3 qator - QWERTY harflar
+    letter_rows = kb.inline_keyboard[1:4]
+    assert [btn.text for btn in letter_rows[0]] == list("qwertyuiop")
+    assert [btn.text for btn in letter_rows[1]] == list("asdfghjkl")
+    assert [btn.text for btn in letter_rows[2]] == list("zxcvbnm")
+
+    # Har bir harf tugmasi joriy so'rovga o'sha harfni qo'shib yuborishi kerak
+    first_letter_btn = letter_rows[0][0]
+    assert first_letter_btn.callback_data == "admin_search_qwerty:aliq"
+
+
+def test_admin_search_qwerty_kb_shows_backspace_only_when_query_nonempty():
+    from keyboards import admin_search_qwerty_kb
+    kb_empty = admin_search_qwerty_kb("", [])
+    kb_with_query = admin_search_qwerty_kb("a", [])
+
+    empty_callbacks = {btn.callback_data for row in kb_empty.inline_keyboard for btn in row}
+    query_callbacks = {btn.callback_data for row in kb_with_query.inline_keyboard for btn in row}
+
+    assert not any(cb.startswith("admin_search_qwerty_bs:") for cb in empty_callbacks)
+    assert any(cb.startswith("admin_search_qwerty_bs:") for cb in query_callbacks)
+
+
+def test_admin_search_qwerty_kb_caps_query_length_for_callback_data_limit():
+    # Telegram callback_data 64 baytdan oshmasligi kerak - juda uzun so'rovda
+    # harf tugmalari joriy so'rovni cheksiz o'stirmasligi kerak.
+    from keyboards import admin_search_qwerty_kb
+    long_query = "a" * 35  # cheklovga aynan yetgan
+    kb = admin_search_qwerty_kb(long_query, [])
+    letter_btn = kb.inline_keyboard[0][0]  # birinchi qatordagi birinchi harf
+    # Chegaraga yetgani uchun yangi harf qo'shilmasligi kerak - joriy so'rovning o'zi qaytishi kerak
+    assert letter_btn.callback_data == f"admin_search_qwerty:{long_query}"
+
+
+def test_admin_search_choice_kb_has_both_search_methods():
+    from keyboards import admin_search_choice_kb
+    kb = admin_search_choice_kb()
+    callbacks = {btn.callback_data for row in kb.inline_keyboard for btn in row}
+    assert "admin_search_by_id" in callbacks
+    assert "admin_search_qwerty:" in callbacks

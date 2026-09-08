@@ -227,6 +227,25 @@ def get_user_by_username(username: str):
         ).fetchone()
 
 
+def search_users_by_prefix(prefix: str, limit: int = 8):
+    """Inline QWERTY qidiruv uchun — username YOKI first_name boshi mos kelgan
+    foydalanuvchilarni qaytaradi (qisman mos kelish, aniq teng emas). Bo'sh
+    prefix uchun bo'sh ro'yxat qaytaradi — chunki "hamma foydalanuvchi" bu
+    yerda ma'nosiz natija bo'lardi va performance uchun ham xavfli."""
+    prefix = (prefix or "").strip().lstrip("@")
+    if not prefix:
+        return []
+    like_pattern = prefix.replace("%", "\\%").replace("_", "\\_") + "%"
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM users WHERE (username LIKE ? ESCAPE '\\' COLLATE NOCASE) "
+            "OR (first_name LIKE ? ESCAPE '\\' COLLATE NOCASE) "
+            "ORDER BY created_at DESC LIMIT ?",
+            (like_pattern, like_pattern, limit),
+        ).fetchall()
+        return rows
+
+
 def set_user_status(telegram_id: int, status: str):
     with get_conn() as conn:
         approved_at = int(time.time()) if status == "approved" else None

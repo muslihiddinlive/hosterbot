@@ -15,7 +15,7 @@ from aiogram.fsm.context import FSMContext
 import database as db
 from config import is_admin, is_superadmin, STORAGE_GROUP_ID, ADMIN_IDS, SUPERADMIN_IDS
 from states import AdminMessageUser, AdminSetLimit, AdminStarsSetting, AdminBanCustomHours, AdminBroadcast, AdminTestDeploy, AdminSearchUser, AdminAIProvider
-from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb, admin_gift_list_kb, admin_self_gift_list_kb, admin_ban_choice_kb, admin_broadcast_confirm_kb, admin_sender_choice_kb, admin_ai_providers_kb, admin_ai_provider_view_kb, admin_ai_provider_kind_kb, admin_ai_cloudflare_model_kb
+from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb, admin_gift_list_kb, admin_self_gift_list_kb, admin_ban_choice_kb, admin_broadcast_confirm_kb, admin_sender_choice_kb, admin_ai_providers_kb, admin_ai_provider_view_kb, admin_ai_provider_kind_kb, admin_ai_cloudflare_model_kb, admin_search_choice_kb, admin_search_qwerty_kb
 from services.deploy_manager import stop_bot_process, start_bot_process, run_build_command, is_running, read_log_tail
 from services.file_utils import bot_workdir
 from services.resource_monitor import can_start_new_bot, bot_ram_mb
@@ -385,13 +385,63 @@ async def cb_admin_user_view(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data == "admin_search_user_ask")
+@router.callback_query(F.data == "admin_search_choice")
+async def cb_admin_search_choice(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+    await callback.message.edit_text(
+        "🔍 Qidiruv usulini tanlang:",
+        reply_markup=admin_search_choice_kb(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_search_by_id")
 async def cb_admin_search_user_ask(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id):
         await callback.answer("Ruxsat yo'q.", show_alert=True)
         return
     await state.set_state(AdminSearchUser.waiting_query)
     await callback.message.answer("🔍 Telegram ID yoki username yuboring (masalan: 123456789 yoki @username):")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_search_qwerty_bs:"))
+async def cb_admin_search_qwerty_backspace(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+    current_query = callback.data.split(":", 1)[1]
+    new_query = current_query[:-1]
+    await _render_qwerty_search(callback, new_query)
+
+
+@router.callback_query(F.data.startswith("admin_search_qwerty:"))
+async def cb_admin_search_qwerty(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+    query = callback.data.split(":", 1)[1]
+    await _render_qwerty_search(callback, query)
+
+
+async def _render_qwerty_search(callback: CallbackQuery, query: str):
+    """admin_search_qwerty va admin_search_qwerty_bs uchun umumiy render logikasi —
+    harf qo'shilganda ham, o'chirilganda ham bir xil: joriy so'rovni ko'rsatib,
+    mos foydalanuvchilarni real vaqtda (har bosishda) filtrlab beradi."""
+    matches = db.search_users_by_prefix(query) if query else []
+    display_query = query if query else "—"
+    match_count_note = f"({len(matches)} ta topildi)" if query else ""
+    try:
+        await callback.message.edit_text(
+            f"🔤 Qidiruv: <code>{html.escape(display_query)}</code> {match_count_note}\n\n"
+            f"Harflarni bosib so'zni yig'ing — mos foydalanuvchilar shu yerda darhol ko'rinadi.",
+            parse_mode="HTML",
+            reply_markup=admin_search_qwerty_kb(query, matches),
+        )
+    except Exception:
+        pass  # matn o'zgarmagan bo'lsa Telegram xato qaytaradi (masalan bo'sh so'rovga qayta bosilganda)
     await callback.answer()
 
 
