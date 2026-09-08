@@ -10,7 +10,7 @@ from aiogram.fsm.context import FSMContext
 
 import database as db
 from config import is_admin, is_superadmin
-from states import ConfirmDelete, FixCode, FixRequirements, FixEnv
+from states import ConfirmDelete, FixCode, FixRequirements, FixEnv, RenameBot
 from keyboards import bot_manage_kb, admin_bot_view_kb, cancel_kb, main_menu_kb, edit_bot_menu_kb
 from services.deploy_manager import start_bot_process, stop_bot_process, read_log_tail, is_running, format_log_block, run_build_command
 from services.resource_monitor import can_start_new_bot, bot_ram_mb, format_ram_limit_message
@@ -78,6 +78,38 @@ async def _ensure_code_present(bot: Bot, bot_row) -> tuple[bool, str]:
     except Exception as e:
         log.exception("Kodni tiklashda xato")
         return False, f"Kodni tiklashda xato: {e}"
+
+
+async def _start_single_bot(bot_id: int, bot: Bot) -> tuple[bool, str]:
+    """Bitta botni ishga tushirishning umumiy logikasi — cb_bot_start bilan bir xil
+    ketma-ketlik, lekin CallbackQuery'ga bog'lanmagan holda (bulk-start uchun ham
+    ishlatiladi, u yerda bitta callback ko'p botga tegishli bo'ladi).
+    Qaytaradi: (muvaffaqiyatli_ishga_tushdimi, bot_label yoki xato matni)."""
+    bot_row = db.get_bot(bot_id)
+    if bot_row is None:
+        return False, f"Bot #{bot_id} topilmadi"
+    bot_label = f"@{bot_row['bot_username']}" if bot_row["bot_username"] else (bot_row["display_name"] or f"Bot #{bot_id}")
+
+    if db.is_banned(bot_row["owner_id"]):
+        return False, f"{bot_label} — egasining ruxsati olib tashlangan"
+
+    allowed, used_mb, budget_mb = can_start_new_bot()
+    if not allowed:
+        return False, f"{bot_label} — {format_ram_limit_message(bot_row['owner_id'], used_mb, budget_mb)}"
+
+    ok, err = await _ensure_code_present(bot, bot_row)
+    if not ok:
+        return False, f"{bot_label} — {err}"
+    bot_row = db.get_bot(bot_id)
+
+    envs = {row["key"]: row["value"] for row in db.list_envs(bot_id)}
+    try:
+        pid = start_bot_process(bot_id, bot_row["code_path"], bot_row["start_cmd"], envs)
+    except Exception as e:
+        log.exception("start_bot_process xatoligi (_start_single_bot)")
+        return False, f"{bot_label} — {e}"
+    db.set_bot_status(bot_id, "running", pid)
+    return True, bot_label
 
 
 @router.callback_query(F.data.startswith("bot_start:"))
@@ -421,6 +453,56 @@ async def cb_edit_bot_menu(callback: CallbackQuery):
         reply_markup=edit_bot_menu_kb(bot_id, has_env=has_env),
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("rename_bot:"))
+async def cb_rename_bot(callback: CallbackQuery, state: FSMContext):
+    bot_id = int(callback.data.split(":")[1])
+    bot_row = db.get_bot(bot_id)
+    if not _authorized(callback, bot_row):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+
+    await state.update_data(rename_bot_id=bot_id)
+    await state.set_state(RenameBot.waiting_name)
+    current = bot_row["display_name"] or bot_row["bot_username"] or "Nomsiz bot"
+    await callback.message.answer(
+        f"✏️ Hozirgi nom: <b>{html.escape(current)}</b>\n\nYangi nomni yozing (faqat ko'rsatiladigan "
+        f"nom o'zgaradi, kod yoki bot_username o'zgarmaydi — qayta build kerak emas):",
+        parse_mode="HTML",
+        reply_markup=cancel_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(RenameBot.waiting_name)
+async def receive_new_bot_name(message: Message, state: FSMContext):
+    data = await state.get_data()
+    bot_id = data.get("rename_bot_id")
+    bot_row = db.get_bot(bot_id)
+    if bot_row is None or (bot_row["owner_id"] != message.from_user.id and not is_admin(message.from_user.id)):
+        await state.clear()
+        await message.answer("Ruxsat yo'q yoki bot topilmadi.", reply_markup=main_menu_kb(is_admin=is_admin(message.from_user.id)))
+        return
+
+    new_name = (message.text or "").strip()
+    if not new_name:
+        await message.answer("Nom bo'sh bo'lishi mumkin emas.")
+        return
+    if len(new_name) > 64:
+        await message.answer("Nom juda uzun (maksimal 64 belgi). Qisqaroq yozing.")
+        return
+
+    db.set_bot_display_name(bot_id, new_name)
+    await state.clear()
+
+    bot_row = db.get_bot(bot_id)
+    has_env = bool(db.list_envs(bot_id))
+    await message.answer(
+        f"✅ Nom o'zgartirildi: <b>{html.escape(new_name)}</b>",
+        parse_mode="HTML",
+        reply_markup=bot_manage_kb(bot_row, has_env=has_env),
+    )
 
 
 # ---------- Crash-fix oqimi: kodni almashtirish ----------

@@ -84,3 +84,8 @@ class FixRequirements(StatesGroup):
 class FixEnv(StatesGroup):
     """Crashed bot uchun mavjud ENV qiymatlarini tahrirlash (KEY=VALUE, bittadan)."""
     waiting_key_value = State()
+
+
+class RenameBot(StatesGroup):
+    """'🛠 Botni tahrirlash' orqali bot ko'rsatiladigan nomini (display_name) o'zgartirish."""
+    waiting_name = State()

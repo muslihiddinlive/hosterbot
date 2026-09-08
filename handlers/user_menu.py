@@ -1,7 +1,8 @@
 import html
 import time
+import logging
 
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
@@ -9,10 +10,13 @@ import database as db
 from config import is_admin, is_superadmin
 from states import ContactAdmin
 from keyboards import cancel_kb, my_bots_list_kb, bot_manage_kb, admin_panel_kb
-from services.deploy_manager import is_running
+from services.deploy_manager import is_running, stop_bot_process
 from services.resource_monitor import bot_ram_mb, total_bots_ram_mb, platform_ram_mb, can_start_new_bot
+from services.backup import backup_database
+from handlers.bot_actions import _start_single_bot
 
 router = Router()
+log = logging.getLogger("hosterbot.user_menu")
 
 
 def _format_uptime(seconds: int) -> str:
@@ -67,6 +71,63 @@ async def back_to_bot_list(callback: CallbackQuery):
     bots = db.list_user_bots(callback.from_user.id)
     await callback.message.edit_text("Sizning botlaringiz:", reply_markup=my_bots_list_kb(bots))
     await callback.answer()
+
+
+@router.callback_query(F.data == "bots_stop_all")
+async def bots_stop_all(callback: CallbackQuery, bot: Bot):
+    # DIQQAT: bu bitta-bitta to'xtatish (bot_stop) funksiyasini ALMASHTIRMAYDI —
+    # shunchaki tezkor qo'shimcha variant. Har bir bot uchun oddiy cb_bot_stop
+    # bilan bir xil ketma-ketlik (stop_bot_process + set_bot_status).
+    bots = [b for b in db.list_user_bots(callback.from_user.id) if b["status"] == "running"]
+    if not bots:
+        await callback.answer("Ishlab turgan bot yo'q.", show_alert=True)
+        return
+
+    await callback.answer(f"⏳ {len(bots)} ta bot to'xtatilmoqda...")
+    for b in bots:
+        try:
+            stop_bot_process(b["bot_id"])
+            db.set_bot_status(b["bot_id"], "stopped", None)
+        except Exception:
+            log.exception(f"bots_stop_all: bot #{b['bot_id']} to'xtatishda xato")
+    await backup_database(bot)
+
+    fresh_bots = db.list_user_bots(callback.from_user.id)
+    await callback.message.edit_text(
+        f"✅ {len(bots)} ta bot to'xtatildi.\n\nSizning botlaringiz:",
+        reply_markup=my_bots_list_kb(fresh_bots),
+    )
+
+
+@router.callback_query(F.data == "bots_start_all")
+async def bots_start_all(callback: CallbackQuery, bot: Bot):
+    # DIQQAT: bitta-bitta ishga tushirish (bot_start) funksiyasi o'zgarishsiz
+    # qoladi — bu ham shunchaki qo'shimcha tezkor variant, xuddi shu
+    # _start_single_bot logikasidan (RAM byudjeti, ban tekshiruvi, kod
+    # tiklash) foydalanadi, faqat ketma-ket bir nechta bot uchun.
+    bots = [b for b in db.list_user_bots(callback.from_user.id) if b["status"] != "running"]
+    if not bots:
+        await callback.answer("Barcha botlar allaqachon ishlab turibdi.", show_alert=True)
+        return
+
+    await callback.answer(f"⏳ {len(bots)} ta bot ishga tushirilmoqda...")
+    started, failed = [], []
+    for b in bots:
+        ok, label_or_error = await _start_single_bot(b["bot_id"], bot)
+        if ok:
+            started.append(label_or_error)
+        else:
+            failed.append(label_or_error)
+    await backup_database(bot)
+
+    lines = []
+    if started:
+        lines.append(f"✅ Ishga tushdi ({len(started)}): " + ", ".join(started))
+    if failed:
+        lines.append(f"⚠️ Ishga tushmadi ({len(failed)}):\n" + "\n".join(f"• {f}" for f in failed))
+
+    fresh_bots = db.list_user_bots(callback.from_user.id)
+    await callback.message.answer("\n\n".join(lines), reply_markup=my_bots_list_kb(fresh_bots))
 
 
 @router.callback_query(F.data.startswith("bot_manage:"))

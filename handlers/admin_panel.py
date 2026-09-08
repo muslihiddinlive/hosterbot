@@ -18,7 +18,7 @@ from states import AdminMessageUser, AdminSetLimit, AdminStarsSetting, AdminBanC
 from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb, admin_gift_list_kb, admin_self_gift_list_kb, admin_ban_choice_kb, admin_broadcast_confirm_kb, admin_sender_choice_kb, admin_ai_providers_kb, admin_ai_provider_view_kb, admin_ai_provider_kind_kb, admin_ai_cloudflare_model_kb
 from services.deploy_manager import stop_bot_process, start_bot_process, run_build_command, is_running, read_log_tail
 from services.file_utils import bot_workdir
-from services.resource_monitor import can_start_new_bot
+from services.resource_monitor import can_start_new_bot, bot_ram_mb
 from aiogram.exceptions import TelegramBadRequest
 from services.backup import backup_database
 
@@ -1409,3 +1409,58 @@ async def ai_provider_priority_entered(message: Message, state: FSMContext):
         f"Endi u faol holatda — \"🤖 AI provayderlar\" bo'limidan boshqarishingiz mumkin.",
         parse_mode="HTML",
     )
+
+
+# ---------- Superadmin dashboard: umumiy statistika ----------
+
+@router.callback_query(F.data == "admin_dashboard")
+async def cb_admin_dashboard(callback: CallbackQuery):
+    if not is_superadmin(callback.from_user.id):
+        await callback.answer("Bu faqat superadminlar uchun.", show_alert=True)
+        return
+
+    stats = db.get_dashboard_stats()
+
+    # Eng ko'p RAM yeyotgan botlarni real vaqtda hisoblab, top-5'ni chiqaramiz —
+    # bu ma'lumot bazada saqlanmaydi, faqat hozirgi jonli jarayonlardan olinadi.
+    ram_usage = []
+    for row in stats["running_bot_rows"]:
+        ram_mb = bot_ram_mb(row["bot_id"])
+        if ram_mb > 0:
+            label = row["bot_username"] or row["display_name"] or f"Bot #{row['bot_id']}"
+            ram_usage.append((label, ram_mb))
+    ram_usage.sort(key=lambda x: x[1], reverse=True)
+    top_ram = ram_usage[:5]
+
+    allowed, used_mb, budget_mb = can_start_new_bot()
+
+    lines = [
+        "📊 <b>Umumiy statistika</b>\n",
+        f"👥 Foydalanuvchilar: <b>{stats['total_users']}</b> "
+        f"(✅ {stats['approved_users']} tasdiqlangan, ⏳ {stats['pending_users']} kutmoqda, "
+        f"⛔️ {stats['banned_users']} ban qilingan)",
+        f"🆕 Bugun ro'yxatdan o'tgan: {stats['new_users_today']}",
+        "",
+        f"🤖 Botlar: <b>{stats['total_bots']}</b> jami "
+        f"(🟢 {stats['running_bots']} ishlayapti, 🟡 {stats['crashed_bots']} qulagan, "
+        f"⭐️ {stats['stars_hosted_bots']} Stars orqali)",
+        f"🚀 Deploy: bugun {stats['deploys_today']}, oxirgi 7 kunda {stats['deploys_week']}",
+        "",
+        f"💾 Server RAM: {used_mb:.0f}/{budget_mb:.0f} MB band",
+        f"💰 Umr bo'yi to'langan Stars: {stats['total_topup_stars']}",
+        f"🤖 Bugungi AI so'rovlari: {stats['ai_calls_today']}",
+    ]
+    if top_ram:
+        lines.append("\n💾 <b>Eng ko'p RAM yeyotgan botlar:</b>")
+        for label, ram_mb in top_ram:
+            lines.append(f"  • {html.escape(label)} — {ram_mb:.1f} MB")
+
+    await callback.message.edit_text(
+        "\n".join(lines),
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Yangilash", callback_data="admin_dashboard")],
+            [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_panel_back")],
+        ]),
+    )
+    await callback.answer()

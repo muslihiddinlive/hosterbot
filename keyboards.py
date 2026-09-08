@@ -165,9 +165,29 @@ def admin_review_kb(request_id: int) -> InlineKeyboardMarkup:
 
 def my_bots_list_kb(bots) -> InlineKeyboardMarkup:
     rows = []
+    # "Hammasini to'xtatish/ishga tushirish" — bitta-bitta boshqarish (pastdagi
+    # ro'yxat) o'zgarishsiz qoladi, bu shunchaki qo'shimcha tezkor variant.
+    # Faqat mos harakat ma'noli bo'lganda ko'rsatiladi: to'xtatish uchun kamida
+    # bitta ishlab turgan bot, ishga tushirish uchun kamida bitta to'xtagan/
+    # qulagan bot kerak.
+    any_running = any(b["status"] == "running" for b in bots)
+    any_stoppable = any(b["status"] != "running" for b in bots)
+    bulk_row = []
+    if any_running:
+        bulk_row.append(InlineKeyboardButton(text="🔴 Hammasini to'xtatish", callback_data="bots_stop_all"))
+    if any_stoppable:
+        bulk_row.append(InlineKeyboardButton(text="🟢 Hammasini ishga tushirish", callback_data="bots_start_all"))
+    if bulk_row:
+        rows.append(bulk_row)
+
     for b in bots:
         label = b["bot_username"] or b["display_name"] or f"Bot #{b['bot_id']}"
-        status_icon = "🟢" if b["status"] == "running" else "🔴"
+        if b["status"] == "running":
+            status_icon = "🟢"
+        elif b["status"] == "crashed":
+            status_icon = "🟡"
+        else:
+            status_icon = "🔴"
         rows.append([InlineKeyboardButton(text=f"{status_icon} {label}", callback_data=f"bot_manage:{b['bot_id']}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -217,6 +237,7 @@ def edit_bot_menu_kb(bot_id: int, has_env: bool = False) -> InlineKeyboardMarkup
     almashtirish tugmalari (fix_code/fix_reqs/fix_env handler'lari bilan bir xil,
     holat crashed/running/stopped bo'lishidan qat'i nazar ishlaydi)."""
     rows = [
+        [InlineKeyboardButton(text="✏️ Nomini o'zgartirish", callback_data=f"rename_bot:{bot_id}")],
         [InlineKeyboardButton(text="📄 Kodni almashtirish", callback_data=f"fix_code:{bot_id}")],
         [InlineKeyboardButton(text="📋 requirements.txt almashtirish", callback_data=f"fix_reqs:{bot_id}")],
     ]
@@ -234,6 +255,7 @@ def admin_panel_kb(is_superadmin: bool = False) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📢 Barcha userlarga xabar", callback_data="admin_broadcast_ask")],
     ]
     if is_superadmin:
+        rows.append([InlineKeyboardButton(text="📊 Umumiy statistika", callback_data="admin_dashboard")])
         rows.append([InlineKeyboardButton(text="⭐️ Stars narxi sozlamalari", callback_data="admin_stars_settings")])
         rows.append([InlineKeyboardButton(text="💰 Bot Stars balansi (real)", callback_data="admin_real_balance")])
         rows.append([InlineKeyboardButton(text="🤖 AI provayderlar", callback_data="admin_ai_providers")])

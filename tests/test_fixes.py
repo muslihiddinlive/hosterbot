@@ -609,3 +609,99 @@ def test_format_ram_limit_message_hides_numbers_from_regular_user(monkeypatch):
     assert "420" not in regular_msg
     assert "242" in superadmin_msg
     assert "420" in superadmin_msg
+
+
+def test_set_bot_display_name_updates_name(tmp_path, monkeypatch):
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    bot_id = db_mod.create_bot(
+        owner_id=1, bot_username=None, bot_token=None, code_path="/tmp/x",
+        storage_file_id=None, is_zip=False, language="python",
+        build_cmd="", start_cmd="python bot.py", display_name="Old Name",
+    )
+    db_mod.set_bot_display_name(bot_id, "New Name")
+    assert db_mod.get_bot(bot_id)["display_name"] == "New Name"
+
+
+def test_edit_bot_menu_kb_has_rename_button():
+    from keyboards import edit_bot_menu_kb
+    kb = edit_bot_menu_kb(5, has_env=False)
+    callbacks = {btn.callback_data for row in kb.inline_keyboard for btn in row}
+    assert "rename_bot:5" in callbacks
+
+
+def test_my_bots_list_kb_shows_bulk_buttons_only_when_applicable():
+    from keyboards import my_bots_list_kb
+
+    # Hech qanday bot yo'q -> bulk tugmalar ko'rinmaydi
+    kb_empty = my_bots_list_kb([])
+    assert kb_empty.inline_keyboard == []
+
+    # Faqat running bot bor -> faqat "hammasini to'xtatish" ko'rinadi
+    only_running = [{"bot_id": 1, "bot_username": "a", "display_name": None, "status": "running"}]
+    kb_running = my_bots_list_kb(only_running)
+    running_callbacks = {btn.callback_data for row in kb_running.inline_keyboard for btn in row}
+    assert "bots_stop_all" in running_callbacks
+    assert "bots_start_all" not in running_callbacks
+
+    # Faqat stopped bot bor -> faqat "hammasini ishga tushirish" ko'rinadi
+    only_stopped = [{"bot_id": 2, "bot_username": "b", "display_name": None, "status": "stopped"}]
+    kb_stopped = my_bots_list_kb(only_stopped)
+    stopped_callbacks = {btn.callback_data for row in kb_stopped.inline_keyboard for btn in row}
+    assert "bots_start_all" in stopped_callbacks
+    assert "bots_stop_all" not in stopped_callbacks
+
+    # Ikkalasi ham bor -> ikkalasi ham ko'rinadi
+    mixed = only_running + only_stopped
+    kb_mixed = my_bots_list_kb(mixed)
+    mixed_callbacks = {btn.callback_data for row in kb_mixed.inline_keyboard for btn in row}
+    assert "bots_start_all" in mixed_callbacks
+    assert "bots_stop_all" in mixed_callbacks
+
+
+def test_my_bots_list_kb_shows_crashed_status_icon():
+    from keyboards import my_bots_list_kb
+    crashed = [{"bot_id": 3, "bot_username": "c", "display_name": None, "status": "crashed"}]
+    kb = my_bots_list_kb(crashed)
+    label_button = kb.inline_keyboard[-1][0]  # bulk qatordan keyingi birinchi bot qatori
+    assert label_button.text.startswith("🟡")
+
+
+def test_get_dashboard_stats_counts_users_and_bots(tmp_path, monkeypatch):
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    db_mod.upsert_user(telegram_id=1, username="a", first_name="A")
+    db_mod.upsert_user(telegram_id=2, username="b", first_name="B")
+    db_mod.set_user_status(2, "approved")
+
+    bot_id_1 = db_mod.create_bot(
+        owner_id=1, bot_username="bot1", bot_token=None, code_path="/tmp/x",
+        storage_file_id=None, is_zip=False, language="python",
+        build_cmd="", start_cmd="python bot.py",
+    )
+    db_mod.set_bot_status(bot_id_1, "running", 111)
+    bot_id_2 = db_mod.create_bot(
+        owner_id=2, bot_username="bot2", bot_token=None, code_path="/tmp/y",
+        storage_file_id=None, is_zip=False, language="python",
+        build_cmd="", start_cmd="python bot.py",
+    )
+    db_mod.set_bot_status(bot_id_2, "crashed", None)
+
+    stats = db_mod.get_dashboard_stats()
+    assert stats["total_users"] == 2
+    assert stats["approved_users"] == 1
+    assert stats["total_bots"] == 2
+    assert stats["running_bots"] == 1
+    assert stats["crashed_bots"] == 1
+    assert stats["deploys_today"] == 2  # ikkalasi ham hozirgina yaratilgan
+
+
+def test_get_dashboard_stats_excludes_deleted_bots(tmp_path, monkeypatch):
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    db_mod.upsert_user(telegram_id=1, username="a", first_name="A")
+    bot_id = db_mod.create_bot(
+        owner_id=1, bot_username="bot1", bot_token=None, code_path="/tmp/x",
+        storage_file_id=None, is_zip=False, language="python",
+        build_cmd="", start_cmd="python bot.py",
+    )
+    db_mod.delete_bot(bot_id)
+    stats = db_mod.get_dashboard_stats()
+    assert stats["total_bots"] == 0

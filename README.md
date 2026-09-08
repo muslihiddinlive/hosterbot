@@ -61,6 +61,8 @@ tugmasi bor (`bot_manage` sahifasida, `edit_bot_menu_kb`):
   `FixCode`/`FixRequirements` state'lari). `.py.txt` kengaytmasi (fayl-menejer xatosi) avtomatik `.py`ga tuzatiladi.
 - **🔑 ENV tahrirlash** — faqat botda ENV mavjud bo'lsagina ko'rsatiladi (mavjud kalitni yangilaydi, yangi qo'shmaydi).
 
+- **✏️ Nomini o'zgartirish** — faqat `display_name` o'zgaradi, qayta build kerak emas.
+
 O'zgarish saqlangach bot avtomatik qayta build qilinib ishga tushiriladi (`_rebuild_and_start`).
 Agar bot tahrirlash paytida **ishlab turgan** bo'lsa, avval xavfsiz to'xtatiladi — aks holda
 eski va yangi jarayon parallel ishlab, bitta Telegram token bilan konflikt yaratib qo'yishi mumkin edi.
@@ -76,6 +78,19 @@ Superadmin **"🤖 AI provayderlar"** bo'limidan istalgan sondagi OpenAI-compati
 limiti va ustuvorlik darajasi bor. Bitta provayder kunlik limitga yetsa, tizim avtomatik
 keyingi (ustuvorligi pastroq) provayderga o'tadi — bitta AI hisobining byudjeti butun
 platformani to'xtatib qo'ymasligi uchun.
+
+### Bulk start/stop va superadmin dashboard
+
+"🤖 Mening botlarim" ro'yxatida, agar mos harakat ma'noli bo'lsa (kamida bitta running/
+stopped bot bo'lsa), qo'shimcha **"🔴 Hammasini to'xtatish"** / **"🟢 Hammasini ishga
+tushirish"** tugmalari ko'rinadi (`my_bots_list_kb`). Bular bitta-bitta boshqarish
+tugmalarini (mavjud, o'zgarishsiz) ALMASHTIRMAYDI — shunchaki qo'shimcha tezkor variant.
+Har bir bot uchun natija (muvaffaqiyatli/muvaffaqiyatsiz) alohida ko'rsatiladi.
+
+Superadmin panelida **"📊 Umumiy statistika"** bo'limi bor (`db.get_dashboard_stats()`):
+foydalanuvchilar (jami/tasdiqlangan/kutayotgan/ban), botlar (jami/ishlayotgan/qulagan),
+bugungi va oxirgi 7 kunlik deploy soni, umr bo'yi to'langan Stars, bugungi AI so'rovlari
+soni, va real vaqtda hisoblangan eng ko'p RAM yeyotgan top-5 bot.
 - `services/deploy_manager.py` — subprocess orqali botlarni ishga tushirish, RAM limiti
 - `services/file_utils.py` — zip/py fayllarni aniqlash va joylashtirish
 - `database.py` — SQLite (users, bots, bot_envs)

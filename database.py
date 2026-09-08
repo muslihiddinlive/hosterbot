@@ -461,6 +461,11 @@ def set_bot_code_path(bot_id: int, code_path: str):
         conn.execute("UPDATE bots SET code_path=? WHERE bot_id=?", (code_path, bot_id))
 
 
+def set_bot_display_name(bot_id: int, display_name: str):
+    with get_conn() as conn:
+        conn.execute("UPDATE bots SET display_name=? WHERE bot_id=?", (display_name, bot_id))
+
+
 def mark_bot_test_clone(bot_id: int):
     with get_conn() as conn:
         conn.execute("UPDATE bots SET is_test_clone=1 WHERE bot_id=?", (bot_id,))
@@ -611,3 +616,69 @@ def get_ai_help_price_stars() -> int:
     so'rashning Stars narxi. config.py'da standart yo'q, shu sabab kod ichida
     to'g'ridan-to'g'ri default beriladi."""
     return int(get_setting("ai_help_price_stars", 5))
+
+
+# ---------- Superadmin dashboard: umumiy statistika ----------
+
+def get_dashboard_stats() -> dict:
+    """Superadmin '📊 Umumiy statistika' bo'limi uchun barcha asosiy raqamlarni
+    bitta so'rovlar to'plamida yig'ib beradi. Faqat SUPERADMIN_IDS ko'radigan
+    joyda ishlatiladi — bu yerdagi raqamlar (jami foydalanuvchi, bugungi yangi
+    bot va h.k.) boshqa hech kimga ko'rsatilmaydi."""
+    now = int(time.time())
+    day_ago = now - 86400
+    week_ago = now - 7 * 86400
+    today_str = time.strftime("%Y-%m-%d", time.gmtime())
+
+    with get_conn() as conn:
+        total_users = conn.execute("SELECT COUNT(*) as c FROM users").fetchone()["c"]
+        approved_users = conn.execute("SELECT COUNT(*) as c FROM users WHERE status='approved'").fetchone()["c"]
+        pending_users = conn.execute("SELECT COUNT(*) as c FROM users WHERE status='pending'").fetchone()["c"]
+        banned_users = conn.execute("SELECT COUNT(*) as c FROM users WHERE is_banned=1").fetchone()["c"]
+        new_users_today = conn.execute(
+            "SELECT COUNT(*) as c FROM users WHERE created_at >= ?", (day_ago,)
+        ).fetchone()["c"]
+
+        total_bots = conn.execute("SELECT COUNT(*) as c FROM bots WHERE status != 'deleted'").fetchone()["c"]
+        running_bots = conn.execute("SELECT COUNT(*) as c FROM bots WHERE status='running'").fetchone()["c"]
+        crashed_bots = conn.execute("SELECT COUNT(*) as c FROM bots WHERE status='crashed'").fetchone()["c"]
+        stars_hosted_bots = conn.execute(
+            "SELECT COUNT(*) as c FROM bots WHERE stars_hosted=1 AND status != 'deleted'"
+        ).fetchone()["c"]
+        deploys_today = conn.execute(
+            "SELECT COUNT(*) as c FROM bots WHERE created_at >= ?", (day_ago,)
+        ).fetchone()["c"]
+        deploys_week = conn.execute(
+            "SELECT COUNT(*) as c FROM bots WHERE created_at >= ?", (week_ago,)
+        ).fetchone()["c"]
+
+        total_topup_stars = conn.execute(
+            "SELECT COALESCE(SUM(lifetime_topup_stars), 0) as s FROM users"
+        ).fetchone()["s"]
+
+        ai_calls_today = conn.execute(
+            "SELECT COUNT(*) as c FROM ai_usage_log WHERE success=1 "
+            "AND strftime('%Y-%m-%d', created_at, 'unixepoch') = ?",
+            (today_str,),
+        ).fetchone()["c"]
+
+        top_ram_rows = conn.execute(
+            "SELECT bot_id, bot_username, display_name FROM bots WHERE status='running' LIMIT 200"
+        ).fetchall()
+
+    return {
+        "total_users": total_users,
+        "approved_users": approved_users,
+        "pending_users": pending_users,
+        "banned_users": banned_users,
+        "new_users_today": new_users_today,
+        "total_bots": total_bots,
+        "running_bots": running_bots,
+        "crashed_bots": crashed_bots,
+        "stars_hosted_bots": stars_hosted_bots,
+        "deploys_today": deploys_today,
+        "deploys_week": deploys_week,
+        "total_topup_stars": total_topup_stars,
+        "ai_calls_today": ai_calls_today,
+        "running_bot_rows": [dict(r) for r in top_ram_rows],
+    }
