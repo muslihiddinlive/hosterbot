@@ -101,6 +101,12 @@ Admin panelidagi "👥 Foydalanuvchilar" bo'limida "🔍 Qidirish" ikkita usulni
   yoki ism boshi bo'yicha, `db.search_users_by_prefix`) darhol yuqorida ko'rinadi — matn
   kiritishga umuman hojat yo'q, bu ayniqsa mobil qurilmada qulay.
 
+Foydalanuvchi ustiga bosilganda (ro'yxatdanmi, ID qidiruvidanmi, QWERTY qidiruvidanmi —
+farqi yo'q, hammasi bir xil `_build_user_view` funksiyasini chaqiradi) to'liq profil
+ko'rsatiladi: har bir botning holati, tili, deploy sanasi, joriy RAM sarfi (ishlab
+turgan bo'lsa), Stars orqali hostlangan bo'lsa muddat, va limit qatori ("2/5 bot" —
+individual yoki global limit ekanligi bilan).
+
 - `services/deploy_manager.py` — subprocess orqali botlarni ishga tushirish, RAM limiti
 - `services/file_utils.py` — zip/py fayllarni aniqlash va joylashtirish
 - `database.py` — SQLite (users, bots, bot_envs)

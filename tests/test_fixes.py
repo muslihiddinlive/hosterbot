@@ -799,3 +799,61 @@ def test_admin_search_choice_kb_has_both_search_methods():
     callbacks = {btn.callback_data for row in kb.inline_keyboard for btn in row}
     assert "admin_search_by_id" in callbacks
     assert "admin_search_qwerty:" in callbacks
+
+
+@pytest.mark.asyncio
+async def test_build_user_view_shows_limit_and_per_bot_details(tmp_path, monkeypatch):
+    # Asosiy talab: userni bosganda (qidiruvdanmi, ro'yxatdanmi - baribir bir
+    # xil _build_user_view chaqiriladi) botlar, deploy sanasi, limit hammasi
+    # bitta ko'rinishda chiqishi kerak.
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    db_mod.upsert_user(telegram_id=100, username="testuser", first_name="Test User")
+    db_mod.set_user_status(100, "approved")
+
+    bot_id = db_mod.create_bot(
+        owner_id=100, bot_username="mybot", bot_token=None, code_path="/tmp/x",
+        storage_file_id=None, is_zip=False, language="python",
+        build_cmd="", start_cmd="python bot.py",
+    )
+    db_mod.set_bot_status(bot_id, "running", 12345)
+
+    import handlers.admin_panel as admin_panel_mod
+    monkeypatch.setattr(admin_panel_mod, "db", db_mod)
+    monkeypatch.setattr(admin_panel_mod, "is_running", lambda bid: True)
+    monkeypatch.setattr(admin_panel_mod, "bot_ram_mb", lambda bid: 42.5)
+    monkeypatch.setattr(admin_panel_mod, "is_superadmin", lambda uid: True)
+
+    text, kb = await admin_panel_mod._build_user_view(100, viewer_id=999)
+
+    assert text is not None
+    assert "mybot" in text
+    assert "python" in text  # til ko'rsatilgan
+    assert "42.5 MB" in text  # RAM ko'rsatilgan
+    assert "1/" in text  # limit qatori: "1/{max_bots}"
+    assert "Test User" in text
+
+
+@pytest.mark.asyncio
+async def test_build_user_view_shows_individual_limit_note(tmp_path, monkeypatch):
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    db_mod.upsert_user(telegram_id=101, username="limiteduser", first_name="Limited")
+    db_mod.set_user_max_bots(101, 10)
+
+    import handlers.admin_panel as admin_panel_mod
+    monkeypatch.setattr(admin_panel_mod, "db", db_mod)
+    monkeypatch.setattr(admin_panel_mod, "is_superadmin", lambda uid: True)
+
+    text, kb = await admin_panel_mod._build_user_view(101, viewer_id=999)
+    assert "10" in text
+    assert "individual" in text
+
+
+@pytest.mark.asyncio
+async def test_build_user_view_returns_none_for_missing_user(tmp_path, monkeypatch):
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    import handlers.admin_panel as admin_panel_mod
+    monkeypatch.setattr(admin_panel_mod, "db", db_mod)
+
+    text, kb = await admin_panel_mod._build_user_view(999999, viewer_id=1)
+    assert text is None
+    assert kb is None

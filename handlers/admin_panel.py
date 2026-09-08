@@ -13,7 +13,7 @@ from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKe
 from aiogram.fsm.context import FSMContext
 
 import database as db
-from config import is_admin, is_superadmin, STORAGE_GROUP_ID, ADMIN_IDS, SUPERADMIN_IDS
+from config import is_admin, is_superadmin, STORAGE_GROUP_ID, ADMIN_IDS, SUPERADMIN_IDS, MAX_BOTS_PER_USER
 from states import AdminMessageUser, AdminSetLimit, AdminStarsSetting, AdminBanCustomHours, AdminBroadcast, AdminTestDeploy, AdminSearchUser, AdminAIProvider
 from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb, admin_gift_list_kb, admin_self_gift_list_kb, admin_ban_choice_kb, admin_broadcast_confirm_kb, admin_sender_choice_kb, admin_ai_providers_kb, admin_ai_provider_view_kb, admin_ai_provider_kind_kb, admin_ai_cloudflare_model_kb, admin_search_choice_kb, admin_search_qwerty_kb
 from services.deploy_manager import stop_bot_process, start_bot_process, run_build_command, is_running, read_log_tail
@@ -332,8 +332,10 @@ async def cb_admin_users(callback: CallbackQuery):
 
 
 async def _build_user_view(telegram_id: int, viewer_id: int):
-    """(text, reply_markup) qaytaradi — cb_admin_user_view va qidiruv natijasi
-    ikkalasida ham ishlatiladi."""
+    """(text, reply_markup) qaytaradi — cb_admin_user_view, qidiruv natijasi (ID
+    va QWERTY ikkalasi ham) va foydalanuvchilar ro'yxatidan bosilganda bir xil
+    to'liq ma'lumot ko'rsatiladi: botlar (holati, tili, deploy sanasi, RAM),
+    limit (nechtasi ishlatilgan/nechtasi bor), balans va to'lov tarixi."""
     user = db.get_user(telegram_id)
     if user is None:
         return None, None
@@ -342,12 +344,30 @@ async def _build_user_view(telegram_id: int, viewer_id: int):
     status_label = {"approved": "✅ Tasdiqlangan", "pending": "⏳ Kutilmoqda", "denied": "⛔️ Rad etilgan"}
     start_date = datetime.fromtimestamp(user["created_at"]).strftime("%Y-%m-%d %H:%M")
 
+    effective_max_bots = user["max_bots"] if user["max_bots"] is not None else MAX_BOTS_PER_USER
+    limit_note = " (individual)" if user["max_bots"] is not None else " (global)"
+    topup_note = f" (umr bo'yi to'langan: {user['lifetime_topup_stars']})" if user["lifetime_topup_stars"] else ""
+
     if bots:
         bots_lines = []
-        icon = {"running": "🟢 ishlayapti", "crashed": "🟡 qulagan", "stopped": "🔴 to'xtatilgan"}
+        icon = {"running": "🟢", "crashed": "🟡", "stopped": "🔴"}
+        status_word = {"running": "ishlayapti", "crashed": "qulagan", "stopped": "to'xtatilgan"}
         for b in bots:
             label = b["bot_username"] or b["display_name"] or f"Bot #{b['bot_id']}"
-            bots_lines.append(f"• {html.escape(label)} — {icon.get(b['status'], b['status'])}")
+            deployed = datetime.fromtimestamp(b["created_at"]).strftime("%Y-%m-%d")
+            line = (
+                f"{icon.get(b['status'], '❓')} <b>{html.escape(label)}</b> — "
+                f"{status_word.get(b['status'], b['status'])}"
+            )
+            if b["language"]:
+                line += f" · {html.escape(b['language'])}"
+            line += f" · deploy: {deployed}"
+            if b["status"] == "running" and is_running(b["bot_id"]):
+                line += f" · {bot_ram_mb(b['bot_id']):.1f} MB"
+            if b["stars_hosted"] and b["paid_until"]:
+                paid_until_str = datetime.fromtimestamp(b["paid_until"]).strftime("%Y-%m-%d %H:%M")
+                line += f"\n   ⭐️ Stars orqali, muddat: {paid_until_str}"
+            bots_lines.append(line)
         bots_text = "\n".join(bots_lines)
     else:
         bots_text = "— hali bot deploy qilmagan —"
@@ -359,7 +379,8 @@ async def _build_user_view(telegram_id: int, viewer_id: int):
         f"Holati: {status_label.get(user['status'], user['status'])}"
         f"{' — 🚫 RUXSATI OLIB TASHLANGAN' if user['is_banned'] else ''}\n"
         f"/start bosgan sana: {start_date}\n"
-        f"⭐️ Balans: <b>{user['balance_stars']}</b> stars\n\n"
+        f"⭐️ Balans: <b>{user['balance_stars']}</b> stars{topup_note}\n"
+        f"📦 Limit: <b>{len(bots)}/{effective_max_bots}</b> bot{limit_note}\n\n"
         f"<b>Botlari ({len(bots)}):</b>\n{bots_text}"
     )
     kb = admin_user_view_kb(
