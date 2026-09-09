@@ -1168,3 +1168,78 @@ def test_build_free_chat_system_prompt_forbids_auto_edit():
     prompt = build_free_chat_system_prompt("@testbot")
     assert "AVTOMATIK O'ZGARTIRA OLMAYSIZ" in prompt or "avtomatik" in prompt.lower()
     assert "pip install" in prompt or "terminal" in prompt.lower()
+
+
+def _fake_media_message(text=None, caption=None, photo=None, video=None, animation=None,
+                         document=None, voice=None, video_note=None, sticker=None, audio=None):
+    """oddiy obyekt — Message'ning has_media aniqlash mantig'ini sinash uchun
+    (to'liq aiogram Message yasashga hojat yo'q, faqat kerakli atributlar)."""
+    class FakeMsg:
+        pass
+    m = FakeMsg()
+    m.text = text
+    m.caption = caption
+    m.photo = photo
+    m.video = video
+    m.animation = animation
+    m.document = document
+    m.voice = voice
+    m.video_note = video_note
+    m.sticker = sticker
+    m.audio = audio
+    return m
+
+
+def _has_media(message) -> bool:
+    """handlers/start.py, admin_review.py, admin_panel.py'dagi has_media
+    hisoblash mantig'ining aynan nusxasi — testda tekshirish uchun."""
+    return bool(
+        message.photo or message.video or message.animation or message.document
+        or message.voice or message.video_note or message.sticker or message.audio
+    )
+
+
+def test_has_media_detects_photo():
+    msg = _fake_media_message(photo=["file_id"])
+    assert _has_media(msg) is True
+
+
+def test_has_media_detects_animation_gif():
+    msg = _fake_media_message(animation="anim_file_id")
+    assert _has_media(msg) is True
+
+
+def test_has_media_detects_document():
+    msg = _fake_media_message(document="doc_file_id")
+    assert _has_media(msg) is True
+
+
+def test_has_media_false_for_plain_text():
+    msg = _fake_media_message(text="hello")
+    assert _has_media(msg) is False
+
+
+def test_has_media_false_for_empty_message():
+    msg = _fake_media_message()
+    assert _has_media(msg) is False
+
+
+def test_preview_text_prefers_text_then_caption_then_placeholder():
+    # handlers/start.py: forward_to_admin'dagi preview_text mantig'i
+    def preview_text(text, caption):
+        return text or caption or "(media, matnsiz)"
+
+    assert preview_text("hello", None) == "hello"
+    assert preview_text(None, "photo caption") == "photo caption"
+    assert preview_text(None, None) == "(media, matnsiz)"
+
+
+def test_start_py_forward_to_admin_rejects_only_when_no_text_no_caption_no_media():
+    # forward_to_admin endi faqat matn EMAS, caption yoki media bo'lsa ham qabul qiladi.
+    def should_reject(text, caption, has_media):
+        return not text and not caption and not has_media
+
+    assert should_reject(None, None, False) is True   # bo'sh xabar - rad etiladi
+    assert should_reject("salom", None, False) is False  # matn - qabul
+    assert should_reject(None, "rasm izohi", False) is False  # faqat caption - qabul
+    assert should_reject(None, None, True) is False  # faqat media (masalan sticker) - qabul

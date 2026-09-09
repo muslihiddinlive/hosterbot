@@ -153,6 +153,23 @@ yechilmagan) backup'ni tiklab qo'yardi — foydalanuvchi Stars sarflab/to'lab, b
 balansi o'zgarmagan holatga tushib qolardi. Endi **har bir** balans o'zgarishidan keyin
 darhol backup qilinadi.
 
+### Adminga/foydalanuvchiga rasm, video, GIF va fayl yuborish
+
+Uchta oqim ham (avval faqat matn qabul qilardi) endi istalgan turdagi xabarni
+(rasm, video, GIF/animation, hujjat, ovozli xabar, sticker, audio) `message.copy_to()`
+yoki `bot.copy_message()` orqali formatini saqlab yuboradi:
+- **Foydalanuvchi → admin** (`handlers/start.py: forward_to_admin`, "📩 Adminga habar berish")
+- **Admin → foydalanuvchi** (`handlers/admin_review.py: send_reply_to_user` — murojaatga javob,
+  `handlers/admin_panel.py: _send_admin_msg` — to'g'ridan-to'g'ri xabar)
+- **Broadcast** (`handlers/admin_panel.py: cb_admin_broadcast_confirm`) — barcha
+  foydalanuvchilarga bir xil media yuboriladi, oldindan ko'rish ham media bilan ko'rsatiladi
+
+Superadmin uchun "kim nomidan yuborilsin" (Ega/Admin) qadami bo'lgan oqimlarda
+(`_send_admin_msg`, broadcast), asl media xabar `chat_id`+`message_id` sifatida
+`state`da saqlanadi — chunki keyingi qadamda (`callback.message` orqali) asl xabarga
+to'g'ridan-to'g'ri kirish imkoni yo'qoladi, shu sabab `bot.copy_message()` bilan qayta
+nusxalanadi.
+
 - `services/deploy_manager.py` — subprocess orqali botlarni ishga tushirish, RAM limiti
 - `services/file_utils.py` — zip/py fayllarni aniqlash va joylashtirish
 - `database.py` — SQLite (users, bots, bot_envs)

@@ -122,6 +122,15 @@ async def send_reply_to_user(message: Message, state: FSMContext, bot: Bot):
     request_id = data.get("reply_request_id")
     action = data.get("reply_action")
     request = db.get_request(request_id)
+
+    has_media = bool(
+        message.photo or message.video or message.animation or message.document
+        or message.voice or message.video_note or message.sticker or message.audio
+    )
+    if not message.text and not message.caption and not has_media:
+        await message.answer("Iltimos, matn, rasm, video, fayl yoki GIF yuboring.")
+        return
+
     await state.clear()
 
     if request is None:
@@ -131,13 +140,20 @@ async def send_reply_to_user(message: Message, state: FSMContext, bot: Bot):
     target_id = request["telegram_id"]
 
     prefix = {
-        "req_approve": "✅ <b>Sizga ruxsat berildi!</b>\n\n",
-        "req_deny": "❌ <b>Afsuski, so'rovingiz rad etildi.</b>\n\n",
-        "req_reply": "💬 <b>Admindan javob:</b>\n\n",
+        "req_approve": "✅ <b>Sizga ruxsat berildi!</b>",
+        "req_deny": "❌ <b>Afsuski, so'rovingiz rad etildi.</b>",
+        "req_reply": "💬 <b>Admindan javob:</b>",
     }.get(action, "")
 
     try:
-        await message.bot.send_message(target_id, prefix + html.escape(message.text), parse_mode="HTML")
+        await message.bot.send_message(target_id, prefix, parse_mode="HTML")
+        if has_media:
+            # DIQQAT: avval faqat matn qabul qilinardi — endi copy_to() orqali
+            # istalgan turdagi xabar (rasm, video, GIF/animation, hujjat va h.k.)
+            # ham asl formatida (caption bilan) foydalanuvchiga yuboriladi.
+            await message.copy_to(target_id)
+        elif message.text:
+            await message.bot.send_message(target_id, html.escape(message.text), parse_mode="HTML")
     except Exception:
         await message.answer("Foydalanuvchiga xabar yuborib bo'lmadi (u botni bloklagan bo'lishi mumkin).")
         return

@@ -861,7 +861,24 @@ async def cb_admin_msg_user(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AdminMessageUser.waiting_text)
 async def admin_msg_text_entered(message: Message, state: FSMContext):
-    await state.update_data(msg_text=message.text)
+    has_media = bool(
+        message.photo or message.video or message.animation or message.document
+        or message.voice or message.video_note or message.sticker or message.audio
+    )
+    if not message.text and not message.caption and not has_media:
+        await message.answer("Iltimos, matn, rasm, video, fayl yoki GIF yuboring.")
+        return
+
+    # DIQQAT: agar keyingi qadamda "kim nomidan yuborilsin" so'ralsa (superadmin
+    # uchun), callback.message ORQALI asl xabarga (rasm/video/h.k.) endi kirish
+    # imkoni yo'q — shu sabab message_id/chat_id'ni saqlab, keyinroq bot.copy_message()
+    # bilan aynan shu xabarni qayta nusxalaymiz.
+    await state.update_data(
+        msg_text=message.text,
+        msg_has_media=has_media,
+        msg_source_chat_id=message.chat.id,
+        msg_source_message_id=message.message_id,
+    )
 
     if is_superadmin(message.from_user.id):
         await message.answer(
@@ -877,9 +894,19 @@ async def _send_admin_msg(message: Message, state: FSMContext, sender: str):
     data = await state.get_data()
     target_id = data.get("msg_target_id")
     text = data.get("msg_text")
+    has_media = data.get("msg_has_media", False)
+    source_chat_id = data.get("msg_source_chat_id")
+    source_message_id = data.get("msg_source_message_id")
     await state.clear()
     try:
-        await message.bot.send_message(target_id, f"{_sender_label(sender)}{html.escape(text)}", parse_mode="HTML")
+        await message.bot.send_message(target_id, _sender_label(sender).rstrip(), parse_mode="HTML")
+        if has_media and source_chat_id and source_message_id:
+            # bot.copy_message() — message.copy_to() bilan bir xil, lekin asl
+            # xabar hozirgi callback/message obyektida emas, alohida saqlangan
+            # chat_id/message_id orqali chaqirilishi kerak bo'lgan holatlar uchun.
+            await message.bot.copy_message(target_id, source_chat_id, source_message_id)
+        elif text:
+            await message.bot.send_message(target_id, html.escape(text), parse_mode="HTML")
         await message.answer("Xabar yuborildi ✅")
     except Exception:
         await message.answer("Xabar yuborilmadi (foydalanuvchi botni bloklagan bo'lishi mumkin).")
@@ -971,7 +998,24 @@ def _sender_label(choice: str) -> str:
 async def admin_broadcast_text_entered(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         return
-    await state.update_data(broadcast_text=message.html_text)
+
+    has_media = bool(
+        message.photo or message.video or message.animation or message.document
+        or message.voice or message.video_note or message.sticker or message.audio
+    )
+    if not message.text and not message.caption and not has_media:
+        await message.answer("Iltimos, matn, rasm, video, fayl yoki GIF yuboring.")
+        return
+
+    # DIQQAT: broadcast uchun asl xabarni (chat_id + message_id) saqlaymiz —
+    # keyingi qadamlarda (sender tanlash, oldindan ko'rish, yuborish) shu
+    # orqali copy_message() bilan qayta-qayta nusxalanadi.
+    await state.update_data(
+        broadcast_text=message.html_text,
+        broadcast_has_media=has_media,
+        broadcast_source_chat_id=message.chat.id,
+        broadcast_source_message_id=message.message_id,
+    )
 
     if is_superadmin(message.from_user.id):
         await message.answer(
@@ -988,10 +1032,24 @@ async def _show_broadcast_preview(message: Message, state: FSMContext):
     data = await state.get_data()
     text = data.get("broadcast_text", "")
     sender = data.get("broadcast_sender", "admin")
+    has_media = data.get("broadcast_has_media", False)
+    source_chat_id = data.get("broadcast_source_chat_id")
+    source_message_id = data.get("broadcast_source_message_id")
     users = db.list_all_users()
+
     await message.answer(
-        f"<b>Oldindan ko'rish</b> ({'👑 Ega' if sender == 'owner' else '👤 Admin'} nomidan):\n\n"
-        f"{_sender_label(sender)}{text}\n\n"
+        f"<b>Oldindan ko'rish</b> ({'👑 Ega' if sender == 'owner' else '👤 Admin'} nomidan):",
+        parse_mode="HTML",
+    )
+    if has_media and source_chat_id and source_message_id:
+        # Media xabarni adminning o'ziga (aynan shu chatga) nusxalab, "oldindan
+        # ko'rish" sifatida ko'rsatamiz — u nima yuborilishini ko'radi.
+        await message.bot.send_message(message.chat.id, _sender_label(sender).rstrip(), parse_mode="HTML")
+        await message.bot.copy_message(message.chat.id, source_chat_id, source_message_id)
+    else:
+        await message.answer(f"{_sender_label(sender)}{text}", parse_mode="HTML")
+
+    await message.answer(
         f"👥 Jami <b>{len(users)}</b> ta foydalanuvchiga yuboriladi. Davom etamizmi?",
         parse_mode="HTML",
         reply_markup=admin_broadcast_confirm_kb(),
@@ -1017,12 +1075,15 @@ async def cb_admin_broadcast_confirm(callback: CallbackQuery, state: FSMContext,
     data = await state.get_data()
     text = data.get("broadcast_text")
     sender = data.get("broadcast_sender", "admin")
+    has_media = data.get("broadcast_has_media", False)
+    source_chat_id = data.get("broadcast_source_chat_id")
+    source_message_id = data.get("broadcast_source_message_id")
     await state.clear()
-    if not text:
+    if not text and not has_media:
         await callback.answer("Xabar matni topilmadi, qaytadan urinib ko'ring.", show_alert=True)
         return
 
-    full_text = _sender_label(sender) + text
+    full_text = _sender_label(sender) + (text or "")
     await callback.answer()
     await callback.message.edit_text("📤 Yuborilmoqda...")
 
@@ -1030,7 +1091,11 @@ async def cb_admin_broadcast_confirm(callback: CallbackQuery, state: FSMContext,
     sent, failed = 0, 0
     for user_row in users:
         try:
-            await bot.send_message(user_row["telegram_id"], full_text, parse_mode="HTML")
+            if has_media and source_chat_id and source_message_id:
+                await bot.send_message(user_row["telegram_id"], _sender_label(sender).rstrip(), parse_mode="HTML")
+                await bot.copy_message(user_row["telegram_id"], source_chat_id, source_message_id)
+            else:
+                await bot.send_message(user_row["telegram_id"], full_text, parse_mode="HTML")
             sent += 1
         except Exception:
             failed += 1

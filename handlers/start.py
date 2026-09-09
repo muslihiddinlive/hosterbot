@@ -71,20 +71,28 @@ async def cancel_any(message: Message, state: FSMContext):
 
 @router.message(ContactAdmin.waiting_message)
 async def forward_to_admin(message: Message, state: FSMContext):
-    if not message.text:
-        await message.answer("Iltimos, matn ko'rinishida xabar yozing.")
+    # DIQQAT: avval faqat matn qabul qilinardi (rasm/fayl/gif yuborilsa rad
+    # etilardi). Endi copy_to() orqali istalgan turdagi xabar (rasm, video,
+    # GIF/animation, hujjat, ovozli xabar, sticker va h.k.) formatini saqlab
+    # adminga yuboriladi — "Forwarded from" belgisisiz, chunki foydalanuvchi
+    # kimligini o'zimiz alohida xabar bilan ko'rsatamiz.
+    if not message.text and not message.caption and not (
+        message.photo or message.video or message.animation or message.document
+        or message.voice or message.video_note or message.sticker or message.audio
+    ):
+        await message.answer("Iltimos, matn, rasm, video, fayl yoki GIF yuboring.")
         return
 
     await state.clear()
-    request_id = db.create_pending_request(message.from_user.id, message.text)
+    preview_text = message.text or message.caption or "(media, matnsiz)"
+    request_id = db.create_pending_request(message.from_user.id, preview_text)
 
     user = message.from_user
     admin_text = (
         f"📩 <b>Yangi murojaat</b>\n\n"
         f"👤 Foydalanuvchi: {html.escape(user.full_name)}"
         f"{' (@' + user.username + ')' if user.username else ''}\n"
-        f"🆔 ID: <code>{user.id}</code>\n\n"
-        f"✉️ Xabar:\n{html.escape(message.text)}"
+        f"🆔 ID: <code>{user.id}</code>"
     )
 
     targets = ADMIN_IDS | SUPERADMIN_IDS
@@ -97,9 +105,11 @@ async def forward_to_admin(message: Message, state: FSMContext):
     sent_any = False
     for admin_id in targets:
         try:
-            sent = await message.bot.send_message(
-                admin_id, admin_text, parse_mode="HTML", reply_markup=admin_review_kb(request_id)
-            )
+            # Avval kim yuborganini ko'rsatuvchi xabar, keyin uning o'zi
+            # yuborgan xabarning aynan o'zi (media bilan yoki matn bilan).
+            sent = await message.bot.send_message(admin_id, admin_text, parse_mode="HTML")
+            await message.copy_to(admin_id)
+            await message.bot.send_message(admin_id, "⬆️ Yuqoridagi murojaatga javob berish:", reply_markup=admin_review_kb(request_id))
             db.set_request_admin_msg(request_id, sent.message_id)
             sent_any = True
         except Exception:
