@@ -742,6 +742,7 @@ async def cb_admin_gift_send(callback: CallbackQuery, bot: Bot):
 
     db.add_user_balance(target_id, -price, reason=f"Gift orqali yechish ({price}⭐️)")
     new_balance = db.get_user_balance(target_id)
+    await backup_database(bot)  # real Stars yechildi — darhol backup (yuqoridagi joylardagi bilan bir xil sabab)
 
     try:
         await bot.send_message(target_id, f"🎁 Sizga admin tomonidan gift yuborildi! Balansingizdan {price} ⭐️ yechildi.")

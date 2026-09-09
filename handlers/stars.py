@@ -26,6 +26,7 @@ from states import StarsTopUp
 from keyboards import hisob_kb, cancel_kb, main_menu_kb
 from services.deploy_manager import start_bot_process, is_running
 from services.resource_monitor import can_start_new_bot, format_ram_limit_message
+from services.backup import backup_database
 
 router = Router()
 
@@ -133,6 +134,12 @@ async def process_successful_payment(message: Message):
         db.set_user_banned(user_id, False)
         db.set_user_blocked_until(user_id, None)
         new_balance = db.get_user_balance(user_id)
+        # MUHIM FIX: foydalanuvchi HAQIQIY pul/Stars to'lagan — bu o'zgarish
+        # darhol backup qilinishi SHART. Render Free Tier diski ephemeral
+        # bo'lgani uchun, agar server backup qilinishidan oldin qayta ko'tarilsa,
+        # eski backup tiklanib, foydalanuvchi to'lagan pul "yo'qolib qolardi"
+        # (Telegram tomonda to'lov muvaffaqiyatli, lekin bizning balansimizda yo'q).
+        await backup_database(message.bot)
         await message.answer(
             f"✅ To'lov qabul qilindi — <b>{amount} ⭐️</b>.\n"
             f"Xizmat haqi: {fee} ⭐️ ({fee_pct}%), balansga qo'shildi: {credited} ⭐️.\n"
@@ -145,6 +152,7 @@ async def process_successful_payment(message: Message):
 
     db.add_user_balance(user_id, amount, reason="Balans to'ldirish")
     new_balance = db.get_user_balance(user_id)
+    await backup_database(message.bot)  # yuqoridagi izohdagi sabab bilan bir xil — real to'lov, darhol backup
 
     if user and user["is_banned"]:
         # Bloklangan, lekin yetarli emas — balans qo'shildi, lekin hali bloklangan holda qoladi.
@@ -193,6 +201,7 @@ async def cb_stars_extend(callback: CallbackQuery, bot: Bot):
     base = bot_row["paid_until"] if (bot_row["paid_until"] and bot_row["paid_until"] > now) else now
     new_paid_until = base + seconds_per_unit
     db.set_bot_stars_payment(bot_id, new_paid_until)
+    await backup_database(bot)  # balans/paid_until o'zgarishi darhol backup qilinishi kerak (yuqoridagi izoh bilan bir xil sabab)
 
     # Agar bot muddati tugab to'xtagan bo'lsa, RAM byudjetini tekshirib qayta ishga tushiramiz
     if bot_row["status"] != "running" or not is_running(bot_id):

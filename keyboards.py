@@ -22,6 +22,45 @@ def cancel_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="⛔️ Bekor qilish")]], resize_keyboard=True)
 
 
+def ai_chat_confirm_kb() -> InlineKeyboardMarkup:
+    """Foydalanuvchi hech qanday tugma/buyruq bilan mos kelmaydigan erkin matn
+    yozganda ko'rsatiladi — 'AI'ga yozyapsizmi?' savoli."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Ha", callback_data="ai_chat_confirm:yes"),
+            InlineKeyboardButton(text="❌ Yo'q", callback_data="ai_chat_confirm:no"),
+        ],
+    ])
+
+
+def ai_chat_pick_bot_kb(bots) -> InlineKeyboardMarkup:
+    """Agar foydalanuvchida bir nechta bot bo'lsa, AI suhbatini qaysi bot
+    konteksti bilan boshlashni tanlash uchun (bot_link_html ishlatilmaydi —
+    bu inline tugma matni, HTML render qilinmaydi)."""
+    rows = []
+    for b in bots:
+        status_icon = "🟢" if b["status"] == "running" else ("🟡" if b["status"] == "crashed" else "🔴")
+        bot_label = b["bot_username"] or b["display_name"] or f"Bot #{b['bot_id']}"
+        rows.append([InlineKeyboardButton(
+            text=f"{status_icon} {bot_label}",
+            callback_data=f"ai_chat_pick_bot:{b['bot_id']}",
+        )])
+    rows.append([InlineKeyboardButton(text="⛔️ Bekor qilish", callback_data="ai_chat_cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def ai_chat_edit_confirm_kb(price_stars: int) -> InlineKeyboardMarkup:
+    """AI konkret fayl tahrirlashni taklif qilganda (function-calling orqali)
+    ko'rsatiladigan tasdiqlash — foydalanuvchi ANIQ roziligisiz hech qanday
+    fayl o'zgarmaydi. 'Ha' bosilsa qo'shimcha price_stars yechiladi."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=f"✅ Ha, tuzat ({price_stars}⭐️)", callback_data="ai_chat_apply_edit:yes"),
+            InlineKeyboardButton(text="❌ Yo'q", callback_data="ai_chat_apply_edit:no"),
+        ],
+    ])
+
+
 def self_service_menu_kb() -> ReplyKeyboardMarkup:
     """Admin tomonidan hali tasdiqlanmagan (pending/yangi/denied) foydalanuvchilar uchun —
     ular admin tasdig'isiz ham Stars orqali o'zlari bot host qila olishlari kerak."""

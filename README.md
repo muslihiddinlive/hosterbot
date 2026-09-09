@@ -123,6 +123,36 @@ botlarim" ichida bot boshqarish sahifasi) HAM bir xil ishlaydi. `<pre>` bloklari
 (masalan crash log xabarlari, `format_log_block`) link ishlatilmaydi — Telegram u yerda
 `<a>` teglarni render qilmaydi, faqat oddiy matn ko'rsatadi.
 
+### Erkin AI suhbat (fallback) va AI orqali tahrirlash
+
+`handlers/ai_chat.py` — foydalanuvchi hech qanday menyu tugmasi/buyruq bilan mos
+kelmaydigan erkin matn yozganda ("hech qanday state'da bo'lmasa"), bot "🤖 AI'ga
+yozyapsizmi?" deb so'raydi (Ha/Yo'q). **MUHIM**: bu router `main.py`da ENG OXIRIDA
+ro'yxatdan o'tadi — aks holda barcha boshqa reply-tugma va state handler'larini
+"yutib" qo'yardi.
+
+"Ha" bosilsa (kerak bo'lsa bot tanlanadi, agar bir nechtasi bo'lsa) — erkin AI
+suhbat rejimi boshlanadi (`AIChat.chatting` state):
+- Har bir savol **1⭐️** turadi (default, `db.get_ai_chat_price_stars()`, superadmin
+  panelidan sozlanadi) — AI kod va requirements.txt ni o'qib tushuntiradi.
+- Agar AI aniq bir tuzatish taklif qilsa (function-calling, `EDIT_FILE_TOOL` orqali —
+  `services/ai_client.py`), foydalanuvchiga ALOHIDA tasdiqlash so'raladi
+  ("✅ Ha, tuzat" / "❌ Yo'q"). **FAQAT tasdiqlangandan keyin** haqiqiy fayl o'zgaradi,
+  qo'shimcha `db.get_ai_help_price_stars()` narxi bilan (crash-tashxis bilan bir xil).
+  AI hech qachon so'ralmasdan yoki tasdiqlanmasdan faylni o'zgartira olmaydi — bu
+  qat'iy qoida system prompt darajasida ham mustahkamlangan (`build_free_chat_system_prompt`).
+- Chiqish: mavjud umumiy "⛔️ Bekor qilish" tugmasi (`handlers/start.py: cancel_any`) —
+  bu handler state'dan mustaqil ishlaydi va `main.py`da eng birinchi ro'yxatdan o'tadi,
+  shu sabab suhbat davomida ham har doim ishlaydi.
+
+**KRITIK BUG FIX (Stars balans)**: avval bir nechta joyda (`cb_ai_help`, `stars.py`dagi
+to'lov va bot-uzaytirish oqimlari, admin gift) Stars balansi o'zgartirilgandan keyin
+`backup_database()` chaqirilmasdi. Render Free Tier diski ephemeral bo'lgani uchun,
+agar server backup'dan oldin qayta ko'tarilsa, `restore_database()` eski (Stars hali
+yechilmagan) backup'ni tiklab qo'yardi — foydalanuvchi Stars sarflab/to'lab, baribir
+balansi o'zgarmagan holatga tushib qolardi. Endi **har bir** balans o'zgarishidan keyin
+darhol backup qilinadi.
+
 - `services/deploy_manager.py` — subprocess orqali botlarni ishga tushirish, RAM limiti
 - `services/file_utils.py` — zip/py fayllarni aniqlash va joylashtirish
 - `database.py` — SQLite (users, bots, bot_envs)

@@ -444,9 +444,9 @@ async def test_ask_ai_falls_back_to_next_provider_when_first_hits_daily_limit(tm
 
     calls = []
 
-    async def fake_call_provider(provider, system_prompt, user_prompt):
+    async def fake_call_provider(provider, messages, tools=None):
         calls.append(provider["name"])
-        return f"javob {provider['name']}dan"
+        return {"content": f"javob {provider['name']}dan"}
 
     monkeypatch.setattr(ai_client_mod, "_call_provider", fake_call_provider)
 
@@ -953,3 +953,218 @@ def test_crash_diagnosis_prompt_truncates_long_requirements():
     # requirements.txt qismi 800 belgigacha qisqartirilishi kerak
     requirements_section = user_prompt.split("requirements.txt tarkibi:")[1]
     assert len(requirements_section) < 900
+
+
+@pytest.mark.asyncio
+async def test_ai_help_backs_up_database_after_deducting_stars(tmp_path, monkeypatch):
+    # KRITIK BUG FIX: avval Stars yechilgandan keyin backup_database
+    # chaqirilmasdi. Render Free Tier diski ephemeral bo'lgani uchun, agar
+    # server backup'dan oldin qayta ko'tarilsa, eski (Stars hali yechilmagan)
+    # backup tiklanib, foydalanuvchi Stars sarflab balansi o'zgarmagan holatga
+    # tushib qolardi. Bu test backup_database HAR DOIM chaqirilishini tekshiradi.
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    db_mod.upsert_user(telegram_id=1, username="testuser", first_name="Test")
+    db_mod.add_user_balance(1, 10, reason="test topup")
+    db_mod.set_setting("ai_help_price_stars", 2)
+
+    code_dir = tmp_path / "bot_1"
+    code_dir.mkdir()
+    bot_id = db_mod.create_bot(
+        owner_id=1, bot_username="testbot", bot_token=None, code_path=str(code_dir),
+        storage_file_id=None, is_zip=False, language="python",
+        build_cmd="", start_cmd="python bot.py",
+    )
+    db_mod.set_bot_status(bot_id, "crashed", None)
+
+    import handlers.bot_actions as bot_actions_mod
+    monkeypatch.setattr(bot_actions_mod, "db", db_mod)
+
+    backup_calls = []
+    async def fake_backup(bot):
+        backup_calls.append(True)
+    monkeypatch.setattr(bot_actions_mod, "backup_database", fake_backup)
+
+    async def fake_ask_ai(system_prompt, user_prompt, telegram_id, bot_id):
+        return "test diagnosis"
+    monkeypatch.setattr(bot_actions_mod, "ask_ai", fake_ask_ai)
+    monkeypatch.setattr(bot_actions_mod, "read_log_tail", lambda path, n_lines=60: "some log")
+
+    class FakeUser:
+        id = 1
+
+    class FakeMessage:
+        from_user = FakeUser()
+        async def answer(self, *args, **kwargs):
+            return FakeMessage()
+        async def edit_text(self, *args, **kwargs):
+            pass
+
+    class FakeCallback:
+        data = f"ai_help:{bot_id}"
+        from_user = FakeUser()
+        message = FakeMessage()
+        async def answer(self, *args, **kwargs):
+            pass
+
+    await bot_actions_mod.cb_ai_help(FakeCallback(), bot=None)
+
+    assert backup_calls == [True], "AI yordamdan keyin backup_database chaqirilishi SHART"
+    assert db_mod.get_user_balance(1) == 8  # 10 - 2 = 8
+
+
+@pytest.mark.asyncio
+async def test_stars_extend_backs_up_database_after_deducting_stars(tmp_path, monkeypatch):
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    db_mod.upsert_user(telegram_id=1, username="testuser", first_name="Test")
+    db_mod.add_user_balance(1, 10, reason="test topup")
+
+    code_dir = tmp_path / "bot_1"
+    code_dir.mkdir()
+    bot_id = db_mod.create_bot(
+        owner_id=1, bot_username="testbot", bot_token=None, code_path=str(code_dir),
+        storage_file_id=None, is_zip=False, language="python",
+        build_cmd="", start_cmd="python bot.py",
+    )
+    db_mod.set_bot_status(bot_id, "running", 999)
+
+    import handlers.stars as stars_mod
+    monkeypatch.setattr(stars_mod, "db", db_mod)
+    monkeypatch.setattr(stars_mod, "is_running", lambda bid: True)
+
+    backup_calls = []
+    async def fake_backup(bot):
+        backup_calls.append(True)
+    monkeypatch.setattr(stars_mod, "backup_database", fake_backup)
+
+    class FakeUser:
+        id = 1
+
+    class FakeCallback:
+        data = f"stars_extend:{bot_id}"
+        from_user = FakeUser()
+        async def answer(self, *args, **kwargs):
+            pass
+
+    await stars_mod.cb_stars_extend(FakeCallback(), bot=None)
+
+    assert backup_calls == [True], "stars_extend'dan keyin backup_database chaqirilishi SHART"
+
+
+def test_get_ai_chat_price_stars_default_and_override(tmp_path, monkeypatch):
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    assert db_mod.get_ai_chat_price_stars() == 1  # default
+    db_mod.set_setting("ai_chat_price_stars", 3)
+    assert db_mod.get_ai_chat_price_stars() == 3
+
+
+def test_ai_chat_confirm_kb_has_yes_and_no():
+    from keyboards import ai_chat_confirm_kb
+    kb = ai_chat_confirm_kb()
+    callbacks = {btn.callback_data for row in kb.inline_keyboard for btn in row}
+    assert "ai_chat_confirm:yes" in callbacks
+    assert "ai_chat_confirm:no" in callbacks
+
+
+def test_ai_chat_pick_bot_kb_lists_all_bots_with_status_icons():
+    from keyboards import ai_chat_pick_bot_kb
+    bots = [
+        {"bot_id": 1, "bot_username": "bot1", "display_name": None, "status": "running"},
+        {"bot_id": 2, "bot_username": None, "display_name": "My Bot", "status": "crashed"},
+    ]
+    kb = ai_chat_pick_bot_kb(bots)
+    texts = [btn.text for row in kb.inline_keyboard for btn in row]
+    assert any("🟢" in t and "bot1" in t for t in texts)
+    assert any("🟡" in t and "My Bot" in t for t in texts)
+    callbacks = {btn.callback_data for row in kb.inline_keyboard for btn in row}
+    assert "ai_chat_pick_bot:1" in callbacks
+    assert "ai_chat_pick_bot:2" in callbacks
+    assert "ai_chat_cancel" in callbacks
+
+
+def test_ai_chat_edit_confirm_kb_shows_price():
+    from keyboards import ai_chat_edit_confirm_kb
+    kb = ai_chat_edit_confirm_kb(2)
+    yes_btn = kb.inline_keyboard[0][0]
+    assert "2⭐️" in yes_btn.text
+    assert yes_btn.callback_data == "ai_chat_apply_edit:yes"
+    assert kb.inline_keyboard[0][1].callback_data == "ai_chat_apply_edit:no"
+
+
+@pytest.mark.asyncio
+async def test_call_provider_sends_tools_when_provided(monkeypatch):
+    # ask_ai_with_tools EDIT_FILE_TOOL bilan chaqirilganda, _call_provider'ga
+    # 'tools' parametri to'g'ri uzatilishi kerak (aks holda AI hech qachon
+    # tahrirlash taklif qila olmaydi).
+    import services.ai_client as ai_client_mod
+
+    captured = {}
+
+    class FakeResponse:
+        status = 200
+        async def json(self):
+            return {"choices": [{"message": {"content": "ok", "tool_calls": None}}]}
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            pass
+
+    class FakeSession:
+        def post(self, url, headers, json):
+            captured["payload"] = json
+            return FakeResponse()
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            pass
+
+    monkeypatch.setattr(ai_client_mod.aiohttp, "ClientSession", lambda timeout=None: FakeSession())
+
+    provider = {"name": "Test", "base_url": "https://example.com/v1", "api_key": None, "model": "m"}
+    messages = [{"role": "user", "content": "hi"}]
+    await ai_client_mod._call_provider(provider, messages, tools=[ai_client_mod.EDIT_FILE_TOOL])
+
+    assert "tools" in captured["payload"]
+    assert captured["payload"]["tools"][0]["function"]["name"] == "propose_file_edit"
+
+
+@pytest.mark.asyncio
+async def test_call_provider_omits_tools_when_not_provided(monkeypatch):
+    import services.ai_client as ai_client_mod
+
+    captured = {}
+
+    class FakeResponse:
+        status = 200
+        async def json(self):
+            return {"choices": [{"message": {"content": "ok"}}]}
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            pass
+
+    class FakeSession:
+        def post(self, url, headers, json):
+            captured["payload"] = json
+            return FakeResponse()
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            pass
+
+    monkeypatch.setattr(ai_client_mod.aiohttp, "ClientSession", lambda timeout=None: FakeSession())
+
+    provider = {"name": "Test", "base_url": "https://example.com/v1", "api_key": None, "model": "m"}
+    messages = [{"role": "user", "content": "hi"}]
+    await ai_client_mod._call_provider(provider, messages)
+
+    assert "tools" not in captured["payload"]
+
+
+def test_build_free_chat_system_prompt_forbids_auto_edit():
+    # Muhim qoida: AI hech qachon "o'zi tahrirladim" demasligi, faqat taklif
+    # berishi va foydalanuvchining o'z tugmasi orqali tahrirlash kerakligini
+    # tushuntirishi kerak.
+    from services.ai_client import build_free_chat_system_prompt
+    prompt = build_free_chat_system_prompt("@testbot")
+    assert "AVTOMATIK O'ZGARTIRA OLMAYSIZ" in prompt or "avtomatik" in prompt.lower()
+    assert "pip install" in prompt or "terminal" in prompt.lower()

@@ -637,6 +637,15 @@ def get_ai_help_price_stars() -> int:
     return int(get_setting("ai_help_price_stars", 5))
 
 
+def get_ai_chat_price_stars() -> int:
+    """Erkin AI suhbat rejimida (handlers/ai_chat.py) har bir xabar uchun narx —
+    crash-tashxisdan (get_ai_help_price_stars) alohida, odatda arzonroq bo'ladi
+    (default 1⭐️), chunki bu shunchaki savol-javob, tashxis emas. AI haqiqatan
+    fayl tahrirlashni taklif qilib, foydalanuvchi tasdiqlasa, QO'SHIMCHA ravishda
+    get_ai_help_price_stars() narxi ham yechiladi (jami ikkisi qo'shiladi)."""
+    return int(get_setting("ai_chat_price_stars", 1))
+
+
 # ---------- Superadmin dashboard: umumiy statistika ----------
 
 def get_dashboard_stats() -> dict:

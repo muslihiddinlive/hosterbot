@@ -858,6 +858,16 @@ async def cb_ai_help(callback: CallbackQuery, bot: Bot):
     db.add_user_balance(owner_id, -price, reason=f"AI crash-tashxis (bot #{bot_id})")
     new_balance = db.get_user_balance(owner_id)
 
+    # MUHIM FIX: Stars yechilgandan keyin DARHOL backup qilamiz (boshqa barcha
+    # balans/bot holatini o'zgartiruvchi joylar kabi). Aks holda: Render Free
+    # Tier diski ephemeral (uxlab-uyg'onishda yoki qayta ishga tushishda
+    # o'chadi) — agar server shu balans o'zgarishidan KEYIN, lekin keyingi
+    # backup'dan OLDIN qayta ko'tarilsa, restore_database() eski (Stars hali
+    # yechilmagan) backup'ni tiklab qo'yardi va foydalanuvchi Stars sarflab,
+    # baribir balansi o'zgarmagan holatga tushib qolardi (aynan shu bug
+    # ko'zga tashlangan holat edi).
+    await backup_database(bot)
+
     await thinking_msg.edit_text(
         f"🤖 <b>AI tashxis — {html.escape(bot_label)}</b>\n\n{html.escape(diagnosis)}\n\n"
         f"<i>-{price}⭐️ yechildi. Qolgan balans: {new_balance}⭐️</i>",

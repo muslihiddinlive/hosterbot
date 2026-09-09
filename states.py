@@ -89,3 +89,13 @@ class FixEnv(StatesGroup):
 class RenameBot(StatesGroup):
     """'🛠 Botni tahrirlash' orqali bot ko'rsatiladigan nomini (display_name) o'zgartirish."""
     waiting_name = State()
+
+
+class AIChat(StatesGroup):
+    """Foydalanuvchi biror tugma/buyruq bilan mos kelmaydigan erkin matn yozganda,
+    bot 'AI'ga yozyapsizmi?' deb so'raydi (fallback handler, handlers/ai_chat.py).
+    'Ha' bosilsa shu state'ga o'tadi va keyingi xabarlar AI'ga (tanlangan bot
+    konteksti bilan) yuboriladi, toki foydalanuvchi biror menyu tugmasini
+    bosmaguncha (bu holatda state avtomatik tozalanadi)."""
+    choosing_bot = State()   # bir nechta bot bo'lsa, qaysi bot haqida gaplashishni tanlash
+    chatting = State()       # tanlangan bot konteksti bilan AI'ga erkin xabar yuborish
