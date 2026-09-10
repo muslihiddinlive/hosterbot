@@ -1243,3 +1243,55 @@ def test_start_py_forward_to_admin_rejects_only_when_no_text_no_caption_no_media
     assert should_reject("salom", None, False) is False  # matn - qabul
     assert should_reject(None, "rasm izohi", False) is False  # faqat caption - qabul
     assert should_reject(None, None, True) is False  # faqat media (masalan sticker) - qabul
+
+
+def test_ai_chat_edit_confirm_kb_shows_bepul_when_price_zero():
+    from keyboards import ai_chat_edit_confirm_kb
+    kb = ai_chat_edit_confirm_kb(0)
+    yes_btn = kb.inline_keyboard[0][0]
+    assert "bepul" in yes_btn.text
+    assert "0⭐️" not in yes_btn.text
+
+
+def test_ai_chat_edit_confirm_kb_shows_price_when_nonzero():
+    from keyboards import ai_chat_edit_confirm_kb
+    kb = ai_chat_edit_confirm_kb(3)
+    yes_btn = kb.inline_keyboard[0][0]
+    assert "3⭐️" in yes_btn.text
+    assert "bepul" not in yes_btn.text
+
+
+def test_bot_manage_kb_shows_bepul_for_vip_viewer():
+    from keyboards import bot_manage_kb
+    crashed_row = {"bot_id": 7, "status": "crashed", "stars_hosted": 0}
+    kb_vip = bot_manage_kb(crashed_row, viewer_is_vip=True)
+    kb_regular = bot_manage_kb(crashed_row, viewer_is_vip=False)
+
+    vip_ai_button = next(btn for row in kb_vip.inline_keyboard for btn in row if btn.callback_data == "ai_help:7")
+    regular_ai_button = next(btn for row in kb_regular.inline_keyboard for btn in row if btn.callback_data == "ai_help:7")
+
+    assert "bepul" in vip_ai_button.text
+    assert "bepul" not in regular_ai_button.text
+    assert "⭐️" in regular_ai_button.text
+
+
+def test_crash_notify_kb_shows_bepul_for_vip_viewer():
+    from keyboards import crash_notify_kb
+    kb_vip = crash_notify_kb(5, viewer_is_vip=True)
+    kb_regular = crash_notify_kb(5, viewer_is_vip=False)
+
+    vip_ai_button = next(btn for row in kb_vip.inline_keyboard for btn in row if btn.callback_data == "ai_help:5")
+    regular_ai_button = next(btn for row in kb_regular.inline_keyboard for btn in row if btn.callback_data == "ai_help:5")
+
+    assert "bepul" in vip_ai_button.text
+    assert "bepul" not in regular_ai_button.text
+
+
+def test_vip_price_logic_zero_for_admin_nonzero_for_regular():
+    # cb_ai_help/handle_ai_chat_message/cb_ai_chat_apply_edit'dagi mantiqning
+    # aynan nusxasi: "price = 0 if is_admin(...) else db.get_ai_help_price_stars()"
+    def compute_price(is_admin_user: bool, normal_price: int) -> int:
+        return 0 if is_admin_user else normal_price
+
+    assert compute_price(True, 5) == 0
+    assert compute_price(False, 5) == 5

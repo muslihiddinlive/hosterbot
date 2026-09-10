@@ -152,7 +152,10 @@ async def manage_bot(callback: CallbackQuery):
         text += f"\n💾 RAM: {bot_ram_mb(bot_id):.1f} MB"
     await callback.message.edit_text(
         text, parse_mode="HTML",
-        reply_markup=bot_manage_kb(bot_row, has_env=bool(db.list_envs(bot_id))),
+        reply_markup=bot_manage_kb(
+            bot_row, has_env=bool(db.list_envs(bot_id)),
+            viewer_is_vip=is_admin(callback.from_user.id),
+        ),
     )
     await callback.answer()
 

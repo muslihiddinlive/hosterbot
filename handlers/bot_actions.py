@@ -32,7 +32,10 @@ def _authorized(callback: CallbackQuery, bot_row) -> bool:
 def _refresh_kb(bot_row, callback: CallbackQuery):
     if is_admin(callback.from_user.id) and bot_row["owner_id"] != callback.from_user.id:
         return admin_bot_view_kb(bot_row)
-    return bot_manage_kb(bot_row, has_env=bool(db.list_envs(bot_row["bot_id"])))
+    return bot_manage_kb(
+        bot_row, has_env=bool(db.list_envs(bot_row["bot_id"])),
+        viewer_is_vip=is_admin(callback.from_user.id),
+    )
 
 
 async def _ensure_code_present(bot: Bot, bot_row) -> tuple[bool, str]:
@@ -501,7 +504,7 @@ async def receive_new_bot_name(message: Message, state: FSMContext):
     await message.answer(
         f"✅ Nom o'zgartirildi: <b>{html.escape(new_name)}</b>",
         parse_mode="HTML",
-        reply_markup=bot_manage_kb(bot_row, has_env=has_env),
+        reply_markup=bot_manage_kb(bot_row, has_env=has_env, viewer_is_vip=is_admin(message.from_user.id)),
     )
 
 
@@ -719,7 +722,7 @@ async def _rebuild_and_start(bot_id: int, bot: Bot, message: Message):
     has_env = bool(db.list_envs(bot_id))
     await message.answer(
         f"✅ <b>{html.escape(bot_label)}</b> qayta build qilindi va ishlab turibdi!",
-        parse_mode="HTML", reply_markup=bot_manage_kb(bot_row, has_env=has_env),
+        parse_mode="HTML", reply_markup=bot_manage_kb(bot_row, has_env=has_env, viewer_is_vip=is_admin(bot_row["owner_id"])),
     )
     await backup_database(bot)
 
@@ -801,7 +804,7 @@ async def cb_ai_help(callback: CallbackQuery, bot: Bot):
         await callback.answer("Ruxsat yo'q.", show_alert=True)
         return
 
-    price = db.get_ai_help_price_stars()
+    price = 0 if is_admin(callback.from_user.id) else db.get_ai_help_price_stars()
     owner_id = bot_row["owner_id"]
     balance = db.get_user_balance(owner_id)
     if balance < price:
@@ -853,23 +856,28 @@ async def cb_ai_help(callback: CallbackQuery, bot: Bot):
         )
         return
 
-    # Faqat AI muvaffaqiyatli javob qaytargandan KEYIN Stars yechamiz —
-    # foydalanuvchi ishlamagan xizmat uchun pul to'lamasligi kerak.
-    db.add_user_balance(owner_id, -price, reason=f"AI crash-tashxis (bot #{bot_id})")
-    new_balance = db.get_user_balance(owner_id)
+    if price > 0:
+        # Faqat AI muvaffaqiyatli javob qaytargandan KEYIN Stars yechamiz —
+        # foydalanuvchi ishlamagan xizmat uchun pul to'lamasligi kerak.
+        db.add_user_balance(owner_id, -price, reason=f"AI crash-tashxis (bot #{bot_id})")
+        new_balance = db.get_user_balance(owner_id)
 
-    # MUHIM FIX: Stars yechilgandan keyin DARHOL backup qilamiz (boshqa barcha
-    # balans/bot holatini o'zgartiruvchi joylar kabi). Aks holda: Render Free
-    # Tier diski ephemeral (uxlab-uyg'onishda yoki qayta ishga tushishda
-    # o'chadi) — agar server shu balans o'zgarishidan KEYIN, lekin keyingi
-    # backup'dan OLDIN qayta ko'tarilsa, restore_database() eski (Stars hali
-    # yechilmagan) backup'ni tiklab qo'yardi va foydalanuvchi Stars sarflab,
-    # baribir balansi o'zgarmagan holatga tushib qolardi (aynan shu bug
-    # ko'zga tashlangan holat edi).
-    await backup_database(bot)
+        # MUHIM FIX: Stars yechilgandan keyin DARHOL backup qilamiz (boshqa barcha
+        # balans/bot holatini o'zgartiruvchi joylar kabi). Aks holda: Render Free
+        # Tier diski ephemeral (uxlab-uyg'onishda yoki qayta ishga tushishda
+        # o'chadi) — agar server shu balans o'zgarishidan KEYIN, lekin keyingi
+        # backup'dan OLDIN qayta ko'tarilsa, restore_database() eski (Stars hali
+        # yechilmagan) backup'ni tiklab qo'yardi va foydalanuvchi Stars sarflab,
+        # baribir balansi o'zgarmagan holatga tushib qolardi (aynan shu bug
+        # ko'zga tashlangan holat edi).
+        await backup_database(bot)
+        price_note = f"\n\n<i>-{price}⭐️ yechildi. Qolgan balans: {new_balance}⭐️</i>"
+    else:
+        # Admin/superadmin uchun AI — VIP, bepul: balans tekshiruvi/yechish/backup
+        # umuman chaqirilmaydi (keraksiz DB yozuv yoki ledger yozuvi yaratmaslik uchun).
+        price_note = "\n\n<i>🎁 VIP (admin) — bepul.</i>"
 
     await thinking_msg.edit_text(
-        f"🤖 <b>AI tashxis — {html.escape(bot_label)}</b>\n\n{html.escape(diagnosis)}\n\n"
-        f"<i>-{price}⭐️ yechildi. Qolgan balans: {new_balance}⭐️</i>",
+        f"🤖 <b>AI tashxis — {html.escape(bot_label)}</b>\n\n{html.escape(diagnosis)}{price_note}",
         parse_mode="HTML",
     )

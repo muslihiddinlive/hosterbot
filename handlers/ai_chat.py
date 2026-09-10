@@ -186,7 +186,7 @@ async def handle_ai_chat_message(message: Message, state: FSMContext, bot: Bot):
         await message.answer("Bot topilmadi, suhbat yakunlandi.", reply_markup=main_menu_kb(is_admin=is_admin(message.from_user.id)))
         return
 
-    price = db.get_ai_chat_price_stars()
+    price = 0 if is_admin(message.from_user.id) else db.get_ai_chat_price_stars()
     owner_id = bot_row["owner_id"]
     balance = db.get_user_balance(owner_id)
     if balance < price:
@@ -221,10 +221,14 @@ async def handle_ai_chat_message(message: Message, state: FSMContext, bot: Bot):
         await thinking_msg.edit_text(f"⚠️ AI hozircha ishlamayapti: {html.escape(str(e))}\n\nStars sarflanmadi.")
         return
 
-    # Faqat AI muvaffaqiyatli javob qaytargandan KEYIN suhbat narxini yechamiz.
-    db.add_user_balance(owner_id, -price, reason=f"AI suhbat (bot #{bot_id})")
-    from services.backup import backup_database
-    await backup_database(bot)
+    if price > 0:
+        # Faqat AI muvaffaqiyatli javob qaytargandan KEYIN suhbat narxini yechamiz.
+        db.add_user_balance(owner_id, -price, reason=f"AI suhbat (bot #{bot_id})")
+        from services.backup import backup_database
+        await backup_database(bot)
+        price_note = f"\n\n<i>-{price}⭐️ yechildi. Qolgan balans: {db.get_user_balance(owner_id)}⭐️</i>"
+    else:
+        price_note = "\n\n<i>🎁 VIP (admin) — bepul.</i>"
 
     tool_calls = ai_message.get("tool_calls") or []
     edit_tool_call = next((tc for tc in tool_calls if tc.get("function", {}).get("name") == "propose_file_edit"), None)
@@ -243,19 +247,20 @@ async def handle_ai_chat_message(message: Message, state: FSMContext, bot: Bot):
             # AI noto'g'ri formatda tool chaqirgan bo'lsa — xavfsiz tomonga o'tamiz,
             # oddiy matn javob sifatida ko'rsatamiz, fayl tahrirlashga urinmaymiz.
             await thinking_msg.edit_text(
-                f"🤖 {html.escape(ai_message.get('content') or explanation or 'Javob olindi, lekin format tushunarsiz.')}\n\n"
-                f"<i>-{price}⭐️ yechildi. Qolgan balans: {db.get_user_balance(owner_id)}⭐️</i>",
+                f"🤖 {html.escape(ai_message.get('content') or explanation or 'Javob olindi, lekin format tushunarsiz.')}"
+                f"{price_note}",
                 parse_mode="HTML",
             )
         else:
-            edit_price = db.get_ai_help_price_stars()
+            edit_price = 0 if is_admin(message.from_user.id) else db.get_ai_help_price_stars()
             await state.update_data(
                 ai_chat_pending_edit={"target": target, "new_content": new_content, "bot_id": bot_id},
             )
             target_label = "kod (.py) fayli" if target == "code" else "requirements.txt"
+            edit_price_label = f"qo'shimcha {edit_price}⭐️" if edit_price > 0 else "bepul, VIP"
             await thinking_msg.edit_text(
                 f"🤖 <b>Tuzatish taklifi — {target_label}</b>\n\n{html.escape(explanation)}\n\n"
-                f"Bu o'zgarishni SIZNING roziligingiz bilan qo'llash mumkin (qo'shimcha {edit_price}⭐️).",
+                f"Bu o'zgarishni SIZNING roziligingiz bilan qo'llash mumkin ({edit_price_label}).",
                 parse_mode="HTML",
                 reply_markup=ai_chat_edit_confirm_kb(edit_price),
             )
@@ -264,8 +269,7 @@ async def handle_ai_chat_message(message: Message, state: FSMContext, bot: Bot):
     else:
         reply_text = (ai_message.get("content") or "").strip() or "Javob bo'sh keldi."
         await thinking_msg.edit_text(
-            f"🤖 {html.escape(reply_text)}\n\n"
-            f"<i>-{price}⭐️ yechildi. Qolgan balans: {db.get_user_balance(owner_id)}⭐️</i>",
+            f"🤖 {html.escape(reply_text)}{price_note}",
             parse_mode="HTML",
         )
         history.append({"role": "user", "content": message.text})
@@ -292,7 +296,7 @@ async def cb_ai_chat_apply_edit(callback: CallbackQuery, state: FSMContext, bot:
         await callback.answer("Ruxsat yo'q yoki bot topilmadi.", show_alert=True)
         return
 
-    edit_price = db.get_ai_help_price_stars()
+    edit_price = 0 if is_admin(callback.from_user.id) else db.get_ai_help_price_stars()
     owner_id = bot_row["owner_id"]
     balance = db.get_user_balance(owner_id)
     if balance < edit_price:
@@ -317,14 +321,18 @@ async def cb_ai_chat_apply_edit(callback: CallbackQuery, state: FSMContext, bot:
         await callback.message.answer(f"⚠️ Faylni yozishda xato: {e}")
         return
 
-    # Fayl muvaffaqiyatli yozilgandan KEYIN Stars yechamiz (bepul urinishlar
-    # uchun pul olinmasligi kerak degan qoida bilan bir xil).
-    db.add_user_balance(owner_id, -edit_price, reason=f"AI tahrirlash qo'llandi (bot #{bot_id})")
-    from services.backup import backup_database
-    await backup_database(bot)
+    if edit_price > 0:
+        # Fayl muvaffaqiyatli yozilgandan KEYIN Stars yechamiz (bepul urinishlar
+        # uchun pul olinmasligi kerak degan qoida bilan bir xil).
+        db.add_user_balance(owner_id, -edit_price, reason=f"AI tahrirlash qo'llandi (bot #{bot_id})")
+        from services.backup import backup_database
+        await backup_database(bot)
+        applied_note = f"(-{edit_price}⭐️)"
+    else:
+        applied_note = "(🎁 VIP, bepul)"
 
     await state.update_data(ai_chat_pending_edit=None)
     await callback.message.edit_text(
-        f"✅ O'zgarish qo'llandi (-{edit_price}⭐️). Qayta build va ishga tushirilmoqda..."
+        f"✅ O'zgarish qo'llandi {applied_note}. Qayta build va ishga tushirilmoqda..."
     )
     await _rebuild_and_start(bot_id, bot, callback.message)

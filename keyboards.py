@@ -52,10 +52,12 @@ def ai_chat_pick_bot_kb(bots) -> InlineKeyboardMarkup:
 def ai_chat_edit_confirm_kb(price_stars: int) -> InlineKeyboardMarkup:
     """AI konkret fayl tahrirlashni taklif qilganda (function-calling orqali)
     ko'rsatiladigan tasdiqlash — foydalanuvchi ANIQ roziligisiz hech qanday
-    fayl o'zgarmaydi. 'Ha' bosilsa qo'shimcha price_stars yechiladi."""
+    fayl o'zgarmaydi. 'Ha' bosilsa qo'shimcha price_stars yechiladi
+    (price_stars=0 — admin/superadmin uchun VIP, bepul)."""
+    price_label = "bepul" if price_stars == 0 else f"{price_stars}⭐️"
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text=f"✅ Ha, tuzat ({price_stars}⭐️)", callback_data="ai_chat_apply_edit:yes"),
+            InlineKeyboardButton(text=f"✅ Ha, tuzat ({price_label})", callback_data="ai_chat_apply_edit:yes"),
             InlineKeyboardButton(text="❌ Yo'q", callback_data="ai_chat_apply_edit:no"),
         ],
     ])
@@ -231,7 +233,7 @@ def my_bots_list_kb(bots) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def bot_manage_kb(bot_row, has_env: bool = False) -> InlineKeyboardMarkup:
+def bot_manage_kb(bot_row, has_env: bool = False, viewer_is_vip: bool = False) -> InlineKeyboardMarkup:
     running = bot_row["status"] == "running"
     crashed = bot_row["status"] == "crashed"
     toggle_text = "⏹ To'xtatish" if running else "▶️ Ishga tushirish"
@@ -248,8 +250,11 @@ def bot_manage_kb(bot_row, has_env: bool = False) -> InlineKeyboardMarkup:
         )])
         # AI-tashxis faqat "nega qulab tushdi" savoliga javob beradi, shu sabab
         # faqat crashed holatda ma'noli — boshqa holatda ko'rsatilmaydi.
+        # viewer_is_vip=True bo'lsa (admin/superadmin) — narx o'rniga "bepul"
+        # ko'rsatiladi, chunki bunday foydalanuvchilar uchun AI VIP, bepul.
+        ai_price_label = "bepul" if viewer_is_vip else f"{db.get_ai_help_price_stars()}⭐️"
         rows.append([InlineKeyboardButton(
-            text=f"🤖 AI yordam ({db.get_ai_help_price_stars()}⭐️)", callback_data=f"ai_help:{bot_row['bot_id']}",
+            text=f"🤖 AI yordam ({ai_price_label})", callback_data=f"ai_help:{bot_row['bot_id']}",
         )])
     # "🛠 Botni tahrirlash" (kod/requirements/env almashtirish) botning holatidan
     # QAT'I NAZAR har doim ko'rsatiladi — foydalanuvchi ishlab turgan botni ham
@@ -466,7 +471,7 @@ def admin_bot_view_kb(bot_row) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def crash_notify_kb(bot_id: int, has_env: bool = False) -> InlineKeyboardMarkup:
+def crash_notify_kb(bot_id: int, has_env: bool = False, viewer_is_vip: bool = False) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text="🔄 Qayta ishga tushirish", callback_data=f"bot_start:{bot_id}")],
         [InlineKeyboardButton(text="🔁 Qayta build qilib urinish", callback_data=f"bot_rebuild:{bot_id}")],
@@ -478,8 +483,9 @@ def crash_notify_kb(bot_id: int, has_env: bool = False) -> InlineKeyboardMarkup:
     env_row = []
     if has_env:
         env_row.append(InlineKeyboardButton(text="🔑 ENV tahrirlash", callback_data=f"fix_env:{bot_id}"))
+    ai_price_label = "bepul" if viewer_is_vip else f"{db.get_ai_help_price_stars()}⭐️"
     env_row.append(InlineKeyboardButton(
-        text=f"🤖 AI yordam ({db.get_ai_help_price_stars()}⭐️)", callback_data=f"ai_help:{bot_id}",
+        text=f"🤖 AI yordam ({ai_price_label})", callback_data=f"ai_help:{bot_id}",
     ))
     rows.append(env_row)
     return InlineKeyboardMarkup(inline_keyboard=rows)

@@ -88,6 +88,17 @@ limiti va ustuvorlik darajasi bor. Bitta provayder kunlik limitga yetsa, tizim a
 keyingi (ustuvorligi pastroq) provayderga o'tadi — bitta AI hisobining byudjeti butun
 platformani to'xtatib qo'ymasligi uchun.
 
+**VIP (admin/superadmin) — AI bepul**: agar AI'ni ishlatayotgan odam (`is_admin()`)
+bo'lsa — crash-tashxis (`cb_ai_help`), erkin suhbat (`handle_ai_chat_message`), va AI
+tahrirlashni qo'llash (`cb_ai_chat_apply_edit`) uchun narx `0` bo'ladi: balans
+tekshiruvi/yechish/backup umuman chaqirilmaydi, tugma matnlarida narx o'rniga "bepul"
+ko'rsatiladi. **DIQQAT**: qaysi `bot_row`/`message`/`callback` orqali kim VIP ekanligi
+aniqlanishini tekshirish kerak — `_rebuild_and_start` kabi bir nechta joydan (jumladan
+`ai_chat.py`dan `callback.message` orqali) chaqiriladigan funksiyalarda `message.from_user.id`
+noto'g'ri bo'lishi mumkin (botning o'zi bo'lib chiqishi mumkin), shu sabab u yerda
+`bot_row["owner_id"]` orqali tekshiriladi, boshqa joylarda esa to'g'ridan-to'g'ri
+so'rovchi (`callback.from_user.id` / `message.from_user.id`) tekshiriladi.
+
 ### Bulk start/stop va superadmin dashboard
 
 "🤖 Mening botlarim" ro'yxatida, agar mos harakat ma'noli bo'lsa (kamida bitta running/
