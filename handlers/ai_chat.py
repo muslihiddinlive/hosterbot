@@ -25,6 +25,7 @@ import re
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
+from aiogram.filters import StateFilter
 
 import database as db
 from config import is_admin
@@ -80,14 +81,20 @@ def _gather_bot_context(bot_row) -> tuple[str, str]:
 
 # ---------- Fallback: hech qanday tugma/buyruq bilan mos kelmagan matn ----------
 
-@router.message(F.text, ~F.text.startswith("/"))
+@router.message(StateFilter(None), F.text, ~F.text.startswith("/"))
 async def fallback_free_text(message: Message, state: FSMContext):
     # DIQQAT: bu handler ENG OXIRIDA ro'yxatdan o'tishi SHART (main.py) — aks
     # holda boshqa barcha reply-tugma va state handler'larini "yutib" qo'yardi.
-    current_state = await state.get_state()
-    if current_state is not None:
-        return  # boshqa oqim (deploy, fix_code va h.k.) davom etayotgan bo'lsa aralashmaymiz
-
+    #
+    # MUHIM FIX: ilgari state tekshiruvi handler ICHIDA ("if current_state is
+    # not None: return") qilinardi. aiogram 3.x'da handler bir marta chaqirilib,
+    # oddiy `return` bilan tugasa ham, dispatcher buni "update ushlandi" deb
+    # hisoblaydi va router ichidagi KEYINGI handler'larga (masalan pastdagi
+    # AIChat.chatting uchun handle_ai_chat_message) umuman yetib bormaydi.
+    # Natijada AI suhbat boshlangandan keyin yozilgan HAR QANDAY xabar shu
+    # yerda "yutilib" ketardi — javob kelmasdi. Endi StateFilter(None) orqali
+    # deklarativ tekshiramiz: state band bo'lsa, aiogram avtomatik ravishda
+    # navbatdagi mos handler'ni sinab ko'radi.
     await message.answer(
         "🤖 Bu buyruqni tushunmadim. AI'ga yozmoqchimisiz?",
         reply_markup=ai_chat_confirm_kb(),
