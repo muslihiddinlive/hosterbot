@@ -1295,3 +1295,144 @@ def test_vip_price_logic_zero_for_admin_nonzero_for_regular():
 
     assert compute_price(True, 5) == 0
     assert compute_price(False, 5) == 5
+
+
+# ---------- GitHub integratsiya testlari ----------
+
+def test_parse_github_url_valid_formats():
+    from services.github_deploy import parse_github_url
+    assert parse_github_url("https://github.com/owner/repo") == ("owner", "repo")
+    assert parse_github_url("https://github.com/owner/repo/") == ("owner", "repo")
+    assert parse_github_url("https://github.com/owner/repo.git") == ("owner", "repo")
+    assert parse_github_url("http://github.com/my-org/my.repo") == ("my-org", "my.repo")
+
+
+def test_parse_github_url_rejects_invalid():
+    from services.github_deploy import parse_github_url, GitHubDeployError
+    with pytest.raises(GitHubDeployError):
+        parse_github_url("not a url")
+    with pytest.raises(GitHubDeployError):
+        parse_github_url("https://gitlab.com/owner/repo")
+    with pytest.raises(GitHubDeployError):
+        parse_github_url("https://github.com/owner")  # repo yo'q
+
+
+def test_generate_webhook_secret_is_unique_and_urlsafe():
+    from services.github_deploy import generate_webhook_secret
+    s1 = generate_webhook_secret()
+    s2 = generate_webhook_secret()
+    assert s1 != s2
+    assert len(s1) > 20
+    assert all(c.isalnum() or c in "-_" for c in s1)
+
+
+@pytest.mark.asyncio
+async def test_download_repo_zip_tries_main_then_master(monkeypatch, tmp_path):
+    import services.github_deploy as gh_mod
+
+    attempted_branches = []
+
+    async def fake_try_download(session, owner, repo, branch, dest_path):
+        attempted_branches.append(branch)
+        return branch == "master"  # faqat "master" muvaffaqiyatli bo'lsin
+
+    monkeypatch.setattr(gh_mod, "_try_download_branch", fake_try_download)
+
+    dest = str(tmp_path / "out.zip")
+    branch = await gh_mod.download_repo_zip("owner", "repo", dest)
+    assert branch == "master"
+    assert attempted_branches == ["main", "master"]  # avval main, keyin master sinaladi
+
+
+@pytest.mark.asyncio
+async def test_download_repo_zip_raises_when_all_branches_fail(monkeypatch, tmp_path):
+    import services.github_deploy as gh_mod
+
+    async def fake_try_download(session, owner, repo, branch, dest_path):
+        return False
+
+    monkeypatch.setattr(gh_mod, "_try_download_branch", fake_try_download)
+
+    with pytest.raises(gh_mod.GitHubDeployError):
+        await gh_mod.download_repo_zip("owner", "repo", str(tmp_path / "out.zip"))
+
+
+@pytest.mark.asyncio
+async def test_download_repo_zip_uses_explicit_branch_only(monkeypatch, tmp_path):
+    import services.github_deploy as gh_mod
+
+    attempted_branches = []
+
+    async def fake_try_download(session, owner, repo, branch, dest_path):
+        attempted_branches.append(branch)
+        return True
+
+    monkeypatch.setattr(gh_mod, "_try_download_branch", fake_try_download)
+
+    branch = await gh_mod.download_repo_zip("owner", "repo", str(tmp_path / "out.zip"), branch="develop")
+    assert branch == "develop"
+    assert attempted_branches == ["develop"]  # faqat berilgan branch sinaladi, main/master emas
+
+
+def test_get_bot_by_webhook_matches_correct_secret(tmp_path, monkeypatch):
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    bot_id = db_mod.create_bot(
+        owner_id=1, bot_username=None, bot_token=None, code_path="/tmp/x",
+        storage_file_id=None, is_zip=True, language="python",
+        build_cmd="", start_cmd="python bot.py",
+        github_url="https://github.com/owner/repo", github_branch="main",
+        webhook_secret="correct-secret-123",
+    )
+
+    assert db_mod.get_bot_by_webhook(bot_id, "correct-secret-123") is not None
+    assert db_mod.get_bot_by_webhook(bot_id, "wrong-secret") is None
+    assert db_mod.get_bot_by_webhook(999999, "correct-secret-123") is None
+
+
+def test_get_bot_by_webhook_returns_none_when_no_secret_set(tmp_path, monkeypatch):
+    # Fayl-upload orqali deploy qilingan (GitHub emas) botlarda webhook_secret
+    # yo'q - webhook so'rovi ularga umuman ta'sir qilmasligi kerak.
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    bot_id = db_mod.create_bot(
+        owner_id=1, bot_username=None, bot_token=None, code_path="/tmp/x",
+        storage_file_id=None, is_zip=False, language="python",
+        build_cmd="", start_cmd="python bot.py",
+    )
+    assert db_mod.get_bot_by_webhook(bot_id, "any-secret") is None
+    assert db_mod.get_bot_by_webhook(bot_id, "") is None
+
+
+def test_create_bot_stores_github_metadata(tmp_path, monkeypatch):
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    bot_id = db_mod.create_bot(
+        owner_id=1, bot_username=None, bot_token=None, code_path="/tmp/x",
+        storage_file_id=None, is_zip=True, language="python",
+        build_cmd="", start_cmd="python bot.py",
+        github_url="https://github.com/owner/repo", github_branch="main",
+        webhook_secret="abc123",
+    )
+    bot_row = db_mod.get_bot(bot_id)
+    assert bot_row["github_url"] == "https://github.com/owner/repo"
+    assert bot_row["github_branch"] == "main"
+    assert bot_row["webhook_secret"] == "abc123"
+
+
+def test_create_bot_github_fields_default_to_none(tmp_path, monkeypatch):
+    # Oddiy fayl-upload deploy - github_url/branch/secret berilmasa None bo'lishi kerak.
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    bot_id = db_mod.create_bot(
+        owner_id=1, bot_username=None, bot_token=None, code_path="/tmp/x",
+        storage_file_id=None, is_zip=False, language="python",
+        build_cmd="", start_cmd="python bot.py",
+    )
+    bot_row = db_mod.get_bot(bot_id)
+    assert bot_row["github_url"] is None
+    assert bot_row["github_branch"] is None
+    assert bot_row["webhook_secret"] is None
+
+
+def test_github_deploy_option_kb_has_correct_callback():
+    from keyboards import github_deploy_option_kb
+    kb = github_deploy_option_kb()
+    callbacks = {btn.callback_data for row in kb.inline_keyboard for btn in row}
+    assert "deploy_from_github" in callbacks

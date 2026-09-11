@@ -3,6 +3,7 @@ import html
 import logging
 import os
 import re
+import shutil
 
 from aiohttp import web
 from aiogram import Bot, Dispatcher
@@ -21,7 +22,10 @@ from services.file_utils import (
 )
 from keyboards import crash_notify_kb
 
-from handlers import start, admin_review, user_menu, add_bot, bot_actions, admin_panel, stars, help_faq, ai_chat
+from services.github_deploy import download_repo_zip, GitHubDeployError
+from handlers.bot_actions import _rebuild_and_start
+
+from handlers import start, admin_review, user_menu, add_bot, bot_actions, admin_panel, stars, help_faq, ai_chat, github_deploy
 
 WATCHDOG_INTERVAL_SEC = 60
 BILLING_WATCHDOG_INTERVAL_SEC = 30
@@ -42,6 +46,7 @@ dp.include_router(bot_actions.router)
 dp.include_router(admin_panel.router)
 dp.include_router(stars.router)
 dp.include_router(help_faq.router)
+dp.include_router(github_deploy.router)
 dp.include_router(ai_chat.router)
 
 
@@ -364,9 +369,110 @@ async def health_check(request: web.Request):
     return web.Response(text="HosterBot ishlayapti ✅")
 
 
+class _WebhookNotifyMessage:
+    """_rebuild_and_start (handlers/bot_actions.py) 'Message' obyekti kutadi
+    (aiogram Message'ning .answer() metodi orqali javob yuboradi) — lekin
+    GitHub webhook so'rovi HTTP kontekstida keladi, hech qanday Telegram
+    Message yo'q. Shu sabab minimal 'soxta Message': faqat .answer() ni
+    bot.send_message(owner_id, ...) ga proksi qiladi, botning o'z egasiga
+    yozadi."""
+    def __init__(self, bot: Bot, chat_id: int):
+        self._bot = bot
+        self._chat_id = chat_id
+
+    async def answer(self, text: str, parse_mode: str = None, **kwargs):
+        try:
+            await self._bot.send_message(self._chat_id, text, parse_mode=parse_mode)
+        except Exception:
+            pass  # foydalanuvchi botni bloklagan bo'lishi mumkin — webhook javobini bloklamaymiz
+
+
+async def github_webhook_handler(request: web.Request):
+    """GitHub push webhook qabul qiladi: /gh-webhook/{bot_id}/{secret}.
+    Secret noto'g'ri bo'lsa yoki bot topilmasa 404 qaytaradi (bot mavjudligi
+    haqida ma'lumot sizib chiqmasligi uchun — 403 emas, 404)."""
+    try:
+        bot_id = int(request.match_info["bot_id"])
+    except (KeyError, ValueError):
+        return web.Response(status=404, text="not found")
+    secret = request.match_info.get("secret", "")
+
+    bot_row = db.get_bot_by_webhook(bot_id, secret)
+    if bot_row is None:
+        return web.Response(status=404, text="not found")
+
+    # GitHub Ping event'ini ham qabul qilamiz (webhook birinchi qo'shilganda
+    # GitHub avtomatik test so'rov yuboradi) — bu holda hech narsa deploy
+    # qilmasdan, faqat 200 qaytaramiz (aks holda GitHub webhook'ni "muvaffaqiyatsiz"
+    # deb belgilab qo'yishi mumkin).
+    event_type = request.headers.get("X-GitHub-Event", "")
+    if event_type == "ping":
+        return web.Response(status=200, text="pong")
+    if event_type != "push":
+        return web.Response(status=200, text="ignored (not a push event)")
+
+    if not bot_row.get("github_url"):
+        return web.Response(status=400, text="bot is not linked to a GitHub repo")
+
+    from services.github_deploy import parse_github_url
+
+    try:
+        owner, repo = parse_github_url(bot_row["github_url"])
+    except GitHubDeployError:
+        return web.Response(status=500, text="invalid stored github_url")
+
+    branch = bot_row.get("github_branch") or "main"
+    tmp_dir = f"/tmp/gh_webhook_{bot_id}"
+    os.makedirs(tmp_dir, exist_ok=True)
+    zip_path = os.path.join(tmp_dir, f"{repo}.zip")
+
+    fake_message = _WebhookNotifyMessage(bot, bot_row["owner_id"])
+    bot_label = bot_row["bot_username"] or bot_row["display_name"] or f"Bot #{bot_id}"
+
+    try:
+        await download_repo_zip(owner, repo, zip_path, branch=branch)
+    except GitHubDeployError as e:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        await fake_message.answer(f"⚠️ {bot_label} — GitHub push kelgan, lekin qayta yuklab bo'lmadi: {e}")
+        return web.Response(status=200, text="download failed, owner notified")
+    except Exception:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        log.exception(f"GitHub webhook: repo yuklashda xato (bot_id={bot_id})")
+        return web.Response(status=200, text="download failed")
+
+    try:
+        # Eski kodni yangi bilan almashtiramiz: avval eski papkani tozalab,
+        # keyin yangi ZIP'ni o'sha yerga extract qilamiz (bot_actions.py'dagi
+        # fix_code bilan bir xil xavfsizlik tamoyili — lekin bu yerda butun
+        # papka, bitta fayl emas, shu sabab papka darajasida almashtiramiz).
+        old_code_path = bot_row["code_path"]
+        extract_dir = os.path.join(tmp_dir, "extracted")
+        extract_zip(zip_path, extract_dir)
+        project_root = resolve_project_root(extract_dir)
+
+        if os.path.isdir(old_code_path):
+            shutil.rmtree(old_code_path, ignore_errors=True)
+        shutil.copytree(project_root, old_code_path)
+        normalize_requirements_filename(old_code_path)
+        fix_all_py_encodings(old_code_path)
+    except Exception as e:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        log.exception(f"GitHub webhook: kodni joylashtirishda xato (bot_id={bot_id})")
+        await fake_message.answer(f"⚠️ {bot_label} — GitHub push kelgan, lekin kodni joylashtirishda xato: {e}")
+        return web.Response(status=200, text="deploy failed, owner notified")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    await fake_message.answer(f"🐙 {bot_label} — GitHub push qabul qilindi, qayta build va ishga tushirilmoqda...")
+    await _rebuild_and_start(bot_id, bot, fake_message)
+
+    return web.Response(status=200, text="ok")
+
+
 def create_app() -> web.Application:
     app = web.Application()
     app.router.add_get("/", health_check)
+    app.router.add_post("/gh-webhook/{bot_id}/{secret}", github_webhook_handler)
 
     SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=WEBHOOK_PATH)
     setup_application(app, dp, bot=bot)

@@ -22,6 +22,14 @@ def cancel_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="⛔️ Bekor qilish")]], resize_keyboard=True)
 
 
+def github_deploy_option_kb() -> InlineKeyboardMarkup:
+    """AddBot.waiting_code bosqichida, fayl yuklashdan tashqari GitHub orqali
+    deploy qilish variantini ham taklif qilish uchun."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🐙 GitHub repo orqali deploy qilish", callback_data="deploy_from_github")],
+    ])
+
+
 def ai_chat_confirm_kb() -> InlineKeyboardMarkup:
     """Foydalanuvchi hech qanday tugma/buyruq bilan mos kelmaydigan erkin matn
     yozganda ko'rsatiladi — 'AI'ga yozyapsizmi?' savoli."""

@@ -59,7 +59,10 @@ CREATE TABLE IF NOT EXISTS bots (
     stars_hosted    INTEGER NOT NULL DEFAULT 0,  -- 1 = admin tasdiqisiz, Stars balansidan hostlangan bot
     paid_until      INTEGER,              -- stars_hosted bot uchun: shu vaqtgacha ishlash huquqi to'langan (epoch)
     detected_credentials TEXT,            -- kod ichidan avtomatik topilgan token/ID'lar (JSON, admin uchun)
-    is_test_clone   INTEGER NOT NULL DEFAULT 0  -- 1 = admin shaxsiy test uchun boshqa bot kodidan clone qilgan nusxa
+    is_test_clone   INTEGER NOT NULL DEFAULT 0,  -- 1 = admin shaxsiy test uchun boshqa bot kodidan clone qilgan nusxa
+    github_url      TEXT,                 -- masalan https://github.com/owner/repo (faqat GitHub orqali deploy qilingan botlarda)
+    github_branch   TEXT,                 -- deploy qilingan branch (masalan "main")
+    webhook_secret  TEXT                  -- noyob token, webhook URL'ni tasdiqlash uchun (secrets.token_urlsafe)
 );
 
 CREATE TABLE IF NOT EXISTS bot_envs (
@@ -149,6 +152,18 @@ def init_db():
             pass
         try:
             conn.execute("ALTER TABLE bots ADD COLUMN is_test_clone INTEGER NOT NULL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE bots ADD COLUMN github_url TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE bots ADD COLUMN github_branch TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE bots ADD COLUMN webhook_secret TEXT")
         except sqlite3.OperationalError:
             pass
         try:
@@ -408,7 +423,8 @@ def count_user_bots(owner_id: int) -> int:
 
 
 def create_bot(owner_id, bot_username, bot_token, code_path, storage_file_id, is_zip, language,
-                build_cmd, start_cmd, display_name=None, deployed_by=None) -> int:
+                build_cmd, start_cmd, display_name=None, deployed_by=None,
+                github_url=None, github_branch=None, webhook_secret=None) -> int:
     # DIQQAT (xavfsizlik fix): bot_token bu yerda XOM Telegram bot tokeni bo'lishi mumkin
     # (masalan admin_panel.py'dagi test-deploy oqimida). bot_envs.value kabi bu ham
     # platform.db orqali STORAGE_GROUP_ID guruhiga backup qilinadi, shu sabab bot_envs bilan
@@ -418,10 +434,12 @@ def create_bot(owner_id, bot_username, bot_token, code_path, storage_file_id, is
         cur = conn.execute(
             """INSERT INTO bots
                (owner_id, bot_username, bot_token, code_path, storage_file_id, is_zip, language,
-                build_cmd, start_cmd, display_name, status, created_at, deployed_by)
-               VALUES (?,?,?,?,?,?,?,?,?,?, 'stopped', ?, ?)""",
+                build_cmd, start_cmd, display_name, status, created_at, deployed_by,
+                github_url, github_branch, webhook_secret)
+               VALUES (?,?,?,?,?,?,?,?,?,?, 'stopped', ?, ?, ?, ?, ?)""",
             (owner_id, bot_username, encrypted_token, code_path, storage_file_id, int(is_zip), language,
-             build_cmd, start_cmd, display_name, int(time.time()), deployed_by),
+             build_cmd, start_cmd, display_name, int(time.time()), deployed_by,
+             github_url, github_branch, webhook_secret),
         )
         return cur.lastrowid
 
@@ -441,6 +459,18 @@ def get_bot(bot_id: int):
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM bots WHERE bot_id=?", (bot_id,)).fetchone()
         return _decrypt_bot_row(row)
+
+
+def get_bot_by_webhook(bot_id: int, webhook_secret: str):
+    """GitHub webhook so'rovi kelganda, URL'dagi bot_id+secret ikkalasi ham
+    to'g'ri mos kelgan botni topadi (secret noto'g'ri bo'lsa None qaytaradi —
+    bu boshqa odamning botini tasodifiy qayta deploy qilishdan himoya)."""
+    bot_row = get_bot(bot_id)
+    if bot_row is None or not bot_row.get("webhook_secret"):
+        return None
+    if bot_row["webhook_secret"] != webhook_secret:
+        return None
+    return bot_row
 
 
 def list_user_bots(owner_id: int):

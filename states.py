@@ -99,3 +99,11 @@ class AIChat(StatesGroup):
     bosmaguncha (bu holatda state avtomatik tozalanadi)."""
     choosing_bot = State()   # bir nechta bot bo'lsa, qaysi bot haqida gaplashishni tanlash
     chatting = State()       # tanlangan bot konteksti bilan AI'ga erkin xabar yuborish
+
+
+class GitHubDeploy(StatesGroup):
+    """'🐙 GitHub orqali deploy' — foydalanuvchi public repo linkini yuboradi,
+    bot uni ZIP sifatida yuklab, keyin mavjud AddBot.waiting_requirements/
+    waiting_build_cmd/waiting_start_cmd/waiting_env oqimiga qo'shiladi (kod
+    ikki marta yozilmasin uchun)."""
+    waiting_url = State()

@@ -99,6 +99,39 @@ noto'g'ri bo'lishi mumkin (botning o'zi bo'lib chiqishi mumkin), shu sabab u yer
 `bot_row["owner_id"]` orqali tekshiriladi, boshqa joylarda esa to'g'ridan-to'g'ri
 so'rovchi (`callback.from_user.id` / `message.from_user.id`) tekshiriladi.
 
+### GitHub repo orqali deploy va avtomatik qayta deploy (webhook)
+
+"➕ Bot qo'shish" bosqichida fayl yuklashdan tashqari **"🐙 GitHub repo orqali
+deploy qilish"** varianti ham bor (`handlers/github_deploy.py`). Foydalanuvchi
+**public** repo linkini yuboradi (masalan `https://github.com/owner/repo`) —
+token talab qilinmaydi. Bot `services/github_deploy.py: download_repo_zip()`
+orqali repo'ni `codeload.github.com` orqali ZIP sifatida yuklab oladi (avval
+`main`, keyin `master` branch sinaladi, aniq branch berilmasa), so'ng
+`handlers/add_bot.py: _process_downloaded_code()` — fayl-yuklash oqimi bilan
+BIR XIL funksiya — orqali davom etadi (kod ikki marta yozilmasin uchun).
+
+**Avtomatik qayta deploy (Render'ning auto-deploy'iga o'xshab, lekin OAuth'siz,
+oddiy GitHub webhook orqali)**: har bir GitHub orqali deploy qilingan bot uchun
+noyob `webhook_secret` generatsiya qilinadi (`database.py`: `bots.webhook_secret`
+ustuni). Deploy tugagach, foydalanuvchiga webhook URL ko'rsatiladi:
+`{WEBHOOK_BASE_URL}/gh-webhook/{bot_id}/{webhook_secret}` — buni GitHub repo
+**Settings → Webhooks → Add webhook**ga qo'lda qo'shishi kerak (Content type:
+`application/json`, faqat `push` event).
+
+`main.py`: `github_webhook_handler` — `POST /gh-webhook/{bot_id}/{secret}`:
+- `bot_id`+`secret` mos kelmasa **404** (bot mavjudligi sizib chiqmasin uchun,
+  403 emas)
+- GitHub `ping` event'ini alohida ushlab, deploy qilmasdan `200 pong` qaytaradi
+  (GitHub webhook birinchi qo'shilganda avtomatik test so'rov yuboradi)
+- `push` bo'lmagan boshqa event turlarini e'tiborsiz qoldiradi (`200 ignored`)
+- Repo'ni qayta yuklab, eski kod papkasini yangisi bilan almashtiradi, so'ng
+  `handlers/bot_actions.py: _rebuild_and_start()` — qayta build+start uchun
+  ISHLAB TURGAN botlarda ham ishlatiladigan xuddi shu funksiya — orqali
+  qayta ishga tushiradi. Bot egasiga Telegram orqali natija haqida xabar
+  beriladi (`_WebhookNotifyMessage` — `_rebuild_and_start`ning `.answer()`
+  chaqiruvini `bot.send_message()`ga proksi qiluvchi minimal wrapper, chunki
+  webhook HTTP kontekstida haqiqiy Telegram `Message` obyekti yo'q).
+
 ### Bulk start/stop va superadmin dashboard
 
 "🤖 Mening botlarim" ro'yxatida, agar mos harakat ma'noli bo'lsa (kamida bitta running/

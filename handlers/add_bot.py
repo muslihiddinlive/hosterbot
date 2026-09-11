@@ -12,7 +12,7 @@ from aiogram.fsm.context import FSMContext
 import database as db
 from config import MAX_BOTS_PER_USER, STORAGE_GROUP_ID, SUPERADMIN_IDS, ADMIN_IDS, is_admin
 from states import AddBot
-from keyboards import cancel_kb, skip_or_add_env_kb, env_added_kb, main_menu_kb, skip_requirements_kb, auto_build_kb
+from keyboards import cancel_kb, skip_or_add_env_kb, env_added_kb, main_menu_kb, skip_requirements_kb, auto_build_kb, github_deploy_option_kb
 from services.file_utils import (
     detect_language_from_zip, extract_zip, bot_workdir, write_env_file,
     resolve_project_root, find_requirements_txt, normalize_requirements_filename,
@@ -70,25 +70,25 @@ async def add_bot_start(message: Message, state: FSMContext):
         parse_mode="HTML",
         reply_markup=cancel_kb(),
     )
+    await message.answer(
+        "Yoki, agar kodingiz GitHub'da (public repo) bo'lsa, pastdagi tugma orqali "
+        "to'g'ridan-to'g'ri repo linki bilan deploy qiling:",
+        reply_markup=github_deploy_option_kb(),
+    )
 
 
-@router.message(AddBot.waiting_code, F.document)
-async def receive_code(message: Message, state: FSMContext, bot: Bot):
-    doc = message.document
-    file_name = doc.file_name or "uploaded"
-    is_zip = file_name.lower().endswith(".zip")
-    is_py = file_name.lower().endswith(".py")
+async def _process_downloaded_code(message: Message, state: FSMContext, local_path: str, tmp_dir: str,
+                                    file_name: str, is_zip: bool, storage_file_id: str = None,
+                                    github_meta: dict = None):
+    """receive_code (fayl yuklash) va GitHub-deploy oqimining IKKALASI ham
+    shu yerga kelib qo'shiladi — kod bir joyda: til aniqlash, ONLY_PYTHON
+    tekshiruvi, state'ga saqlash, va keyingi qadam (requirements yoki
+    build_cmd) uchun xabar tayyorlash.
 
-    if not (is_zip or is_py):
-        await message.answer("Faqat .py yoki .zip fayl yuboring.")
-        return
-
-    tmp_dir = f"/tmp/upload_{message.from_user.id}_{message.message_id}"
-    os.makedirs(tmp_dir, exist_ok=True)
-    local_path = os.path.join(tmp_dir, file_name)
-    await bot.download(doc, destination=local_path)
-
+    github_meta berilsa (owner/repo/branch/webhook_secret), state'ga ham
+    saqlanadi — keyinroq create_bot() chaqirilganda ishlatiladi."""
     external_imports: list[str] = []
+    is_py = file_name.lower().endswith(".py")
     if is_py:
         language = "python"
         with open(local_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -104,22 +104,14 @@ async def receive_code(message: Message, state: FSMContext, bot: Bot):
         await message.answer(ONLY_PYTHON_TEXT, parse_mode="HTML")
         return
 
-    # STORAGE_GROUP_ID guruhiga backup sifatida yuboramiz (disk ephemeral bo'lgani uchun)
-    storage_file_id = None
-    try:
-        sent = await bot.send_document(
-            STORAGE_GROUP_ID, doc.file_id,
-            caption=f"Owner: {message.from_user.id} (@{message.from_user.username})\nFile: {file_name}",
-        )
-        storage_file_id = sent.document.file_id
-    except Exception:
-        pass
-
-    await state.update_data(
+    update_kwargs = dict(
         tmp_path=local_path, tmp_dir=tmp_dir, file_name=file_name,
         is_zip=is_zip, language=language, storage_file_id=storage_file_id,
         external_imports=external_imports,
     )
+    if github_meta:
+        update_kwargs.update(github_meta)
+    await state.update_data(**update_kwargs)
 
     warn_text = ""
     if warnings:
@@ -175,6 +167,36 @@ async def receive_code(message: Message, state: FSMContext, bot: Bot):
         parse_mode="HTML",
         reply_markup=auto_build_kb(),
     )
+
+
+@router.message(AddBot.waiting_code, F.document)
+async def receive_code(message: Message, state: FSMContext, bot: Bot):
+    doc = message.document
+    file_name = doc.file_name or "uploaded"
+    is_zip = file_name.lower().endswith(".zip")
+    is_py = file_name.lower().endswith(".py")
+
+    if not (is_zip or is_py):
+        await message.answer("Faqat .py yoki .zip fayl yuboring.")
+        return
+
+    tmp_dir = f"/tmp/upload_{message.from_user.id}_{message.message_id}"
+    os.makedirs(tmp_dir, exist_ok=True)
+    local_path = os.path.join(tmp_dir, file_name)
+    await bot.download(doc, destination=local_path)
+
+    # STORAGE_GROUP_ID guruhiga backup sifatida yuboramiz (disk ephemeral bo'lgani uchun)
+    storage_file_id = None
+    try:
+        sent = await bot.send_document(
+            STORAGE_GROUP_ID, doc.file_id,
+            caption=f"Owner: {message.from_user.id} (@{message.from_user.username})\nFile: {file_name}",
+        )
+        storage_file_id = sent.document.file_id
+    except Exception:
+        pass
+
+    await _process_downloaded_code(message, state, local_path, tmp_dir, file_name, is_zip, storage_file_id)
 
 
 @router.message(AddBot.waiting_code)
@@ -361,6 +383,9 @@ async def finalize_deploy(message: Message, state: FSMContext, bot: Bot):
         start_cmd=data.get("start_cmd", ""),
         display_name=display_name,
         deployed_by=deployed_by,
+        github_url=data.get("github_url"),
+        github_branch=data.get("github_branch"),
+        webhook_secret=data.get("webhook_secret"),
     )
 
     extract_dir = bot_workdir(bot_id)
@@ -555,7 +580,23 @@ async def finalize_deploy(message: Message, state: FSMContext, bot: Bot):
     if stars_flow:
         stars_text = f"\n⭐️ Stars orqali hostlandi — qolgan vaqt: {format_remaining(seconds_per_unit)}"
 
-    await message.answer(f"✅ <b>Bot deploy bo'ldi va ishlab turibdi!</b>{username_text}{stars_text}", parse_mode="HTML")
+    github_text = ""
+    if data.get("github_url"):
+        from config import WEBHOOK_BASE_URL
+        webhook_secret = data.get("webhook_secret")
+        if WEBHOOK_BASE_URL and webhook_secret:
+            hook_url = f"{WEBHOOK_BASE_URL.rstrip('/')}/gh-webhook/{bot_id}/{webhook_secret}"
+            github_text = (
+                f"\n\n🐙 <b>GitHub avtomatik qayta deploy</b>:\n"
+                f"Repo: <code>{html.escape(data['github_url'])}</code> (branch: <code>{data.get('github_branch', 'main')}</code>)\n\n"
+                f"Har safar shu repo'ga push qilganingizda bot avtomatik qayta deploy bo'lishi uchun:\n"
+                f"1️⃣ GitHub repo → <b>Settings → Webhooks → Add webhook</b>\n"
+                f"2️⃣ Payload URL: <code>{hook_url}</code>\n"
+                f"3️⃣ Content type: <code>application/json</code>\n"
+                f"4️⃣ \"Just the push event\" tanlangan holda qoldiring, <b>Add webhook</b> bosing"
+            )
+
+    await message.answer(f"✅ <b>Bot deploy bo'ldi va ishlab turibdi!</b>{username_text}{stars_text}{github_text}", parse_mode="HTML")
     await backup_database(bot)
 
     notify_text = (
