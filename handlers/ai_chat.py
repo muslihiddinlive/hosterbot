@@ -23,12 +23,12 @@ import os
 import re
 
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, FSInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.filters import StateFilter
 
 import database as db
-from config import is_admin
+from config import is_admin, STORAGE_GROUP_ID
 from states import AIChat
 from keyboards import ai_chat_confirm_kb, ai_chat_pick_bot_kb, ai_chat_edit_confirm_kb, main_menu_kb, cancel_kb
 from services.ai_client import ask_ai_with_tools, build_free_chat_system_prompt, AIError
@@ -327,6 +327,22 @@ async def cb_ai_chat_apply_edit(callback: CallbackQuery, state: FSMContext, bot:
         log.exception("AI taklif qilgan tahrirlashni yozishda xato")
         await callback.message.answer(f"⚠️ Faylni yozishda xato: {e}")
         return
+
+    # MUHIM FIX: yangi fayl (kod yoki requirements.txt) ilgari FAQAT workdir'ga
+    # yozilib, hech qachon STORAGE_GROUP'ga backup qilinmasdi — platforma qayta
+    # ishga tushganda AI tahrirlagan o'zgarish yo'qolib, eski fayl tiklanardi
+    # (fix_code/fix_reqs'da topilgan xato bilan bir xil sabab).
+    try:
+        sent = await bot.send_document(
+            STORAGE_GROUP_ID, FSInputFile(target_path),
+            caption=f"{os.path.basename(target_path)} (AI tahrirlagan) — Bot #{bot_id}, Owner: {owner_id}",
+        )
+        if target == "code":
+            db.set_storage_file_id(bot_id, sent.document.file_id, is_zip=False)
+        else:
+            db.set_requirements_file_id(bot_id, sent.document.file_id)
+    except Exception:
+        log.exception("AI tahrirlagan faylni STORAGE_GROUP'ga backup qilishda xato")
 
     if edit_price > 0:
         # Fayl muvaffaqiyatli yozilgandan KEYIN Stars yechamiz (bepul urinishlar

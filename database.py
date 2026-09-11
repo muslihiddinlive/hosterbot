@@ -457,6 +457,27 @@ def create_bot(owner_id, bot_username, bot_token, code_path, storage_file_id, is
         return cur.lastrowid
 
 
+def set_storage_file_id(bot_id: int, file_id: str, is_zip: bool = None):
+    """Botning asosiy kodi (.py/.zip) qayta backup qilingandan keyin uning yangi
+    file_id'sini saqlaydi — platforma qayta ishga tushganda (restore_running_bots)
+    ESKI emas, aynan shu ENG SO'NGGI backup orqali tiklanadi.
+
+    MUHIM FIX: ilgari "📄 Kodni almashtirish" (fix_code) orqali kod tahrirlansa,
+    yangi kod FAQAT workdir'ga (ephemeral diskka) yozilardi, storage_file_id esa
+    hamon ILK deploydagi eski faylga ishora qilib qolardi. Natijada platforma
+    restart bo'lganda (Render spin-down/redeploy) bot yana ESKI kod bilan
+    tiklanardi — go'yo tahrirlash "bekor bo'lganday" ko'rinardi.
+    """
+    with get_conn() as conn:
+        if is_zip is None:
+            conn.execute("UPDATE bots SET storage_file_id=? WHERE bot_id=?", (file_id, bot_id))
+        else:
+            conn.execute(
+                "UPDATE bots SET storage_file_id=?, is_zip=? WHERE bot_id=?",
+                (file_id, int(is_zip), bot_id),
+            )
+
+
 def set_requirements_file_id(bot_id: int, file_id: str):
     """requirements.txt Telegram STORAGE_GROUP'ga backup qilingandan keyin, uning
     file_id'sini saqlaydi — platforma qayta ishga tushganda (restore_running_bots)

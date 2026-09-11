@@ -591,6 +591,19 @@ async def receive_fix_code_file(message: Message, state: FSMContext, bot: Bot):
 
     await state.clear()
 
+    # MUHIM FIX: yangi kodni ham asosiy deploy fayli bilan bir xil tamoyilda
+    # STORAGE_GROUP_ID'ga backup qilamiz va DB'dagi storage_file_id'ni
+    # yangilaymiz — aks holda platforma qayta ishga tushganda bot ESKI (ilk
+    # deploydagi) kod bilan tiklanib qolardi.
+    try:
+        sent = await bot.send_document(
+            STORAGE_GROUP_ID, doc.file_id,
+            caption=f"{target_name} (tahrirlangan) — Bot #{bot_id}, Owner: {bot_row['owner_id']}",
+        )
+        db.set_storage_file_id(bot_id, sent.document.file_id, is_zip=False)
+    except Exception:
+        log.exception("Yangi kodni STORAGE_GROUP'ga backup qilishda xato")
+
     # Yangi kod bilan bevosita "qayta build + ishga tushirish" ni ishga tushiramiz —
     # foydalanuvchi yana alohida tugma bosishiga hojat qoldirmaslik uchun.
     await message.answer("✅ Yangi kod qabul qilindi. Qayta build va ishga tushirilmoqda...")
