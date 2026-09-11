@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import shutil
+import time
 
 from aiohttp import web
 from aiogram import Bot, Dispatcher
@@ -12,7 +13,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
-from config import BOT_TOKEN, WEBHOOK_BASE_URL, WEBHOOK_PATH, PORT, SUPERADMIN_IDS, is_admin
+from config import BOT_TOKEN, WEBHOOK_BASE_URL, WEBHOOK_PATH, PORT, ADMIN_IDS, SUPERADMIN_IDS, is_admin
 import database as db
 from services.backup import restore_database, backup_database
 from services.deploy_manager import is_running, read_log_tail, run_build_command, start_bot_process, stop_bot_process, format_log_block
@@ -78,6 +79,34 @@ async def global_error_handler(event: ErrorEvent):
     return True
 
 
+async def notify_bot_down(bot: Bot, bot_row, reason: str, log_tail: str = None):
+    """
+    Bot to'xtaganda/ishga tushmay qolganda — nafaqat egasiga, balki BARCHA
+    admin va superadminlarga ham darhol xabar yuboradi (log bilan birga).
+
+    MUHIM FIX: ilgari faqat crash_watchdog egasiga xabar yuborar edi, admin/
+    superadminlar esa umuman bilmasdi. Yana ham jiddiyrog'i — platforma qayta
+    ishga tushganda (Render restart/spin-down) restore_running_bots muvaffaqiyatsiz
+    bo'lsa, HECH KIMGA xabar bormasdi (faqat server logiga yozilardi, uni odatda
+    hech kim kuzatib turmaydi) — foydalanuvchi ertalab botni o'zi tekshirib
+    ko'rmaguncha muammodan bexabar qolardi.
+    """
+    label = bot_row["bot_username"] or bot_row["display_name"] or f"Bot #{bot_row['bot_id']}"
+    text = format_log_block(f"⚠️ {label} — {reason}", log_tail or "Log topilmadi.")
+    recipients = {bot_row["owner_id"], *ADMIN_IDS, *SUPERADMIN_IDS}
+    for uid in recipients:
+        try:
+            await bot.send_message(
+                uid, text, parse_mode="HTML",
+                reply_markup=crash_notify_kb(
+                    bot_row["bot_id"], has_env=bool(db.list_envs(bot_row["bot_id"])),
+                    viewer_is_vip=is_admin(uid),
+                ),
+            )
+        except Exception:
+            pass
+
+
 async def restore_running_bots(bot: Bot):
     """
     Render Free Tier diski ephemeral bo'lgani uchun, HosterBot platformasining o'zi
@@ -122,6 +151,11 @@ async def restore_running_bots(bot: Bot):
             if not bot_row["storage_file_id"]:
                 log.warning(f"{label}: kod fayli yo'qolgan va storage_file_id yo'q — tiklab bo'lmadi.")
                 db.set_bot_status(bot_id, "crashed", None)
+                await notify_bot_down(
+                    bot, bot_row,
+                    "platforma qayta ishga tushdi (Render restart), lekin bu botning kod fayli "
+                    "diskda ham, zaxirada ham topilmadi — botni qayta yuklashingiz kerak.",
+                )
                 continue
             try:
                 tmp_path = os.path.join(workdir, "_restore_download")
@@ -139,6 +173,10 @@ async def restore_running_bots(bot: Bot):
             except Exception as e:
                 log.warning(f"{label}: kodni tiklashda xato: {e}")
                 db.set_bot_status(bot_id, "crashed", None)
+                await notify_bot_down(
+                    bot, bot_row,
+                    f"platforma qayta ishga tushdi, lekin kodni zaxiradan tiklashda xato: {e}",
+                )
                 continue
         elif bot_row["is_zip"]:
             # Kod diskda hali joyida (disk o'chmagan) — lekin zip botlarda haqiqiy
@@ -154,6 +192,11 @@ async def restore_running_bots(bot: Bot):
                 build_ok = run_build_command(workdir, bot_row["build_cmd"] or "", log_file)
             if not build_ok:
                 db.set_bot_status(bot_id, "crashed", None)
+                await notify_bot_down(
+                    bot, bot_row,
+                    "platforma qayta ishga tushgach, botni qayta build qilishda xato yuz berdi.",
+                    log_tail=read_log_tail(workdir, n_lines=30),
+                )
                 continue
             pid = start_bot_process(bot_id, workdir, start_cmd, envs)
             db.set_bot_status(bot_id, "running", pid)
@@ -161,6 +204,11 @@ async def restore_running_bots(bot: Bot):
         except Exception as e:
             log.warning(f"{label}: qayta ishga tushirishda xato: {e}")
             db.set_bot_status(bot_id, "crashed", None)
+            await notify_bot_down(
+                bot, bot_row,
+                f"platforma qayta ishga tushgach, botni ishga tushirishda xato: {e}",
+                log_tail=read_log_tail(workdir, n_lines=30),
+            )
 
 
 async def crash_watchdog():
@@ -168,7 +216,7 @@ async def crash_watchdog():
     Render'dagi kabi: har WATCHDOG_INTERVAL_SEC soniyada "running" deb belgilangan
     botlarni tekshiradi. Agar process kutilmaganda o'lgan bo'lsa (masalan runtime
     xatosi, xotira yetishmasligi va h.k.), holatini "crashed"ga o'zgartiradi va
-    egasiga log bilan birga xabar beradi.
+    egasiga HAMDA barcha admin/superadminlarga log bilan birga darhol xabar beradi.
     """
     while True:
         await asyncio.sleep(WATCHDOG_INTERVAL_SEC)
@@ -180,21 +228,8 @@ async def crash_watchdog():
                     continue
 
                 db.set_bot_status(bot_row["bot_id"], "crashed", None)
-                username = bot_row["bot_username"]
-                label = f"@{username}" if username else (bot_row["display_name"] or f"Bot #{bot_row['bot_id']}")
                 crash_log = read_log_tail(bot_row["code_path"], n_lines=30)
-                try:
-                    await bot.send_message(
-                        bot_row["owner_id"],
-                        format_log_block(f"⚠️ {label} kutilmaganda to'xtab qoldi", crash_log),
-                        parse_mode="HTML",
-                        reply_markup=crash_notify_kb(
-                            bot_row["bot_id"], has_env=bool(db.list_envs(bot_row["bot_id"])),
-                            viewer_is_vip=is_admin(bot_row["owner_id"]),
-                        ),
-                    )
-                except Exception:
-                    pass
+                await notify_bot_down(bot, bot_row, "kutilmaganda to'xtab qoldi", log_tail=crash_log)
                 await backup_database(bot)
         except Exception as e:
             log.warning(f"Watchdog xatoligi: {e}")
@@ -203,20 +238,54 @@ async def crash_watchdog():
 async def billing_watchdog():
     """
     Har BILLING_WATCHDOG_INTERVAL_SEC soniyada Stars orqali (admin tasdig'isiz)
-    hostlangan, lekin to'lov muddati (paid_until) o'tib ketgan botlarni to'xtatadi
-    va egasiga balansni to'ldirishni taklif qiladi.
+    hostlangan, to'lov muddati (paid_until) o'tib ketgan botlarni tekshiradi.
+
+    AVTO-UZAYTIRISH: agar foydalanuvchi balansida yana kamida bitta davr uchun
+    (stars_per_unit) yetarli stars bo'lsa va u bloklanmagan bo'lsa — botni
+    to'xtatmasdan, AVTOMATIK balansdan yechib, paid_until'ni yana bir davrga
+    suradi (foydalanuvchi "Uzaytirish" tugmasini bosishi shart emas). Masalan
+    10 kunlik balans bo'lsa, har 24 soatda birma-bir avtomatik yechiladi va
+    balans tugagunicha bot ishlab turadi. Faqat balans yetarli bo'lmaganda yoki
+    foydalanuvchi bloklanganda bot to'xtatiladi.
     """
     while True:
         await asyncio.sleep(BILLING_WATCHDOG_INTERVAL_SEC)
         try:
             for bot_row in db.list_expired_stars_bots():
                 bot_id = bot_row["bot_id"]
+                owner_id = bot_row["owner_id"]
                 label = bot_row["bot_username"] or bot_row["display_name"] or f"Bot #{bot_id}"
+
+                stars_per_unit = db.get_stars_per_unit()
+                seconds_per_unit = db.get_seconds_per_unit()
+                balance = db.get_user_balance(owner_id)
+
+                if not db.is_banned(owner_id) and balance >= stars_per_unit:
+                    db.add_user_balance(
+                        owner_id, -stars_per_unit,
+                        reason=f"Avto-uzaytirish (#{bot_id}, +{seconds_per_unit // 3600} soat)",
+                    )
+                    now = int(time.time())
+                    base = bot_row["paid_until"] if (bot_row["paid_until"] and bot_row["paid_until"] > now) else now
+                    new_paid_until = base + seconds_per_unit
+                    db.set_bot_stars_payment(bot_id, new_paid_until)
+                    await backup_database(bot)
+                    try:
+                        await bot.send_message(
+                            owner_id,
+                            f"🔄 <b>{html.escape(label)}</b> uchun vaqt avtomatik uzaytirildi "
+                            f"(-{stars_per_unit}⭐️). Qolgan balans: {balance - stars_per_unit}⭐️.",
+                            parse_mode="HTML",
+                        )
+                    except Exception:
+                        pass
+                    continue
+
                 stop_bot_process(bot_id)
                 db.set_bot_status(bot_id, "stopped", None)
                 try:
                     await bot.send_message(
-                        bot_row["owner_id"],
+                        owner_id,
                         f"⏱ <b>{html.escape(label)}</b> uchun to'langan vaqt tugadi, bot to'xtatildi.\n\n"
                         f"\"💳 Hisob\" orqali balansingizni to'ldirib, botni yana uzaytirishingiz mumkin.",
                         parse_mode="HTML",

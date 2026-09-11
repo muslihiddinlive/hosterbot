@@ -17,7 +17,7 @@ from services.file_utils import (
     detect_language_from_zip, extract_zip, bot_workdir, write_env_file,
     resolve_project_root, find_requirements_txt, normalize_requirements_filename,
     list_py_files_in_zip, resolve_start_command, fix_all_py_encodings,
-    detect_external_imports, detect_credentials,
+    detect_external_imports, detect_credentials, cleanup_bot_files,
 )
 from services.deploy_manager import run_build_command, start_bot_process, static_scan, read_log_tail, is_running, format_log_block
 from services.resource_monitor import can_start_new_bot, format_ram_limit_message
