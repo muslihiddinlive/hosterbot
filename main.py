@@ -185,6 +185,19 @@ async def restore_running_bots(bot: Bot):
             # (tashqi, bo'sh) papkaga ishora qilib qoladi.
             workdir = resolve_project_root(workdir)
 
+        # MUHIM FIX: agar bu bot uchun alohida backup qilingan requirements.txt
+        # bo'lsa (dastlabki deploy'da .py+requirements.txt sifatida yuklangan,
+        # yoki keyinchalik "requirements.txt almashtirish" orqali yangilangan),
+        # uni HAR DOIM workdir'ga qayta yozamiz — disk tozalangan bo'lsa ham
+        # (code_missing=True), qolgan bo'lsa ham (eng so'nggi versiya ustun bo'lsin
+        # deb). Ilgari bu umuman qilinmagan edi — shu sabab requirements.txt har
+        # restart'da "o'zi o'chib ketayotganday" ko'rinardi.
+        if bot_row["requirements_file_id"]:
+            try:
+                await bot.download(bot_row["requirements_file_id"], destination=os.path.join(workdir, "requirements.txt"))
+            except Exception as e:
+                log.warning(f"{label}: requirements.txt'ni tiklashda xato: {e}")
+
         envs = {e["key"]: e["value"] for e in db.list_envs(bot_id)}
         try:
             log_path = os.path.join(workdir, "run.log")

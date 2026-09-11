@@ -210,7 +210,23 @@ async def receive_requirements(message: Message, state: FSMContext, bot: Bot):
     tmp_dir = data.get("tmp_dir")
     req_path = os.path.join(tmp_dir, "requirements.txt")
     await bot.download(message.document, destination=req_path)
-    await state.update_data(requirements_path=req_path)
+
+    # MUHIM FIX: ilgari requirements.txt faqat /tmp'ga (keyin workdir'ga) yozilib,
+    # hech qachon Telegram STORAGE_GROUP'ga backup qilinmasdi — platforma qayta
+    # ishga tushganda (Render restart, ephemeral disk) shu sabab requirements.txt
+    # butunlay yo'qolib qolardi. Endi asosiy kod fayli bilan bir xil tamoyilda
+    # STORAGE_GROUP_ID'ga ham yuboriladi, file_id state'da saqlanadi.
+    requirements_file_id = None
+    try:
+        sent = await bot.send_document(
+            STORAGE_GROUP_ID, message.document.file_id,
+            caption=f"requirements.txt — Owner: {message.from_user.id} (@{message.from_user.username})",
+        )
+        requirements_file_id = sent.document.file_id
+    except Exception:
+        pass
+
+    await state.update_data(requirements_path=req_path, requirements_file_id=requirements_file_id)
 
     await state.set_state(AddBot.waiting_build_cmd)
     await message.answer(
@@ -407,6 +423,7 @@ async def finalize_deploy(message: Message, state: FSMContext, bot: Bot):
         github_url=data.get("github_url"),
         github_branch=data.get("github_branch"),
         webhook_secret=data.get("webhook_secret"),
+        requirements_file_id=data.get("requirements_file_id"),
     )
 
     extract_dir = bot_workdir(bot_id)

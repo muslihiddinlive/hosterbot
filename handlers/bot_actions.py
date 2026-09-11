@@ -9,7 +9,7 @@ from aiogram.types import CallbackQuery, Message, FSInputFile
 from aiogram.fsm.context import FSMContext
 
 import database as db
-from config import is_admin, is_superadmin
+from config import is_admin, is_superadmin, STORAGE_GROUP_ID
 from states import ConfirmDelete, FixCode, FixRequirements, FixEnv, RenameBot
 from keyboards import bot_manage_kb, admin_bot_view_kb, cancel_kb, main_menu_kb, edit_bot_menu_kb
 from services.deploy_manager import start_bot_process, stop_bot_process, read_log_tail, is_running, format_log_block, run_build_command, bot_link_html
@@ -648,6 +648,20 @@ async def receive_fix_reqs_file(message: Message, state: FSMContext, bot: Bot):
         log.exception("requirements.txt yuklashda xato")
         await message.answer(f"⚠️ Faylni yuklab olishda xato: {e}")
         return
+
+    # MUHIM FIX: ilgari bu yerda yangi requirements.txt FAQAT workdir'ga
+    # (Render'ning ephemeral diskiga) yozilardi — Telegram STORAGE_GROUP'ga hech
+    # qachon backup qilinmasdi. Natijada platforma qayta ishga tushganda
+    # (restart/redeploy) aynan shu "tuzatilgan" requirements.txt yo'qolib,
+    # bot yana eski (yoki umuman yo'q) requirements.txt bilan tiklanardi.
+    try:
+        sent = await bot.send_document(
+            STORAGE_GROUP_ID, doc.file_id,
+            caption=f"requirements.txt (yangilangan) — Bot #{bot_id}, Owner: {bot_row['owner_id']}",
+        )
+        db.set_requirements_file_id(bot_id, sent.document.file_id)
+    except Exception:
+        log.exception("requirements.txt STORAGE_GROUP'ga backup qilishda xato")
 
     await state.clear()
     await message.answer("✅ Yangi requirements.txt qabul qilindi. Qayta build va ishga tushirilmoqda...")

@@ -167,6 +167,18 @@ def init_db():
         except sqlite3.OperationalError:
             pass
         try:
+            # MUHIM FIX: requirements.txt (alohida .py fayl sifatida deploy qilingan
+            # botlarda, yoki "requirements.txt almashtirish" oqimi orqali) ilgari
+            # FAQAT workdir'ga (Render'ning ephemeral diskiga) yozilardi — hech qachon
+            # Telegram STORAGE_GROUP'ga backup qilinmasdi. Natijada platforma qayta
+            # ishga tushganda (restart/redeploy) faqat asosiy .py/.zip fayl tiklanardi,
+            # requirements.txt esa BUTUNLAY yo'qolib qolardi (foydalanuvchiga "bot
+            # requirements.txt'ni o'chirib yuboryapti" bo'lib ko'rinardi). Endi uning
+            # ham alohida Telegram file_id'si saqlanadi va restore paytida tiklanadi.
+            conn.execute("ALTER TABLE bots ADD COLUMN requirements_file_id TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
             conn.execute("ALTER TABLE users ADD COLUMN is_banned INTEGER NOT NULL DEFAULT 0")
         except sqlite3.OperationalError:
             pass
@@ -424,7 +436,8 @@ def count_user_bots(owner_id: int) -> int:
 
 def create_bot(owner_id, bot_username, bot_token, code_path, storage_file_id, is_zip, language,
                 build_cmd, start_cmd, display_name=None, deployed_by=None,
-                github_url=None, github_branch=None, webhook_secret=None) -> int:
+                github_url=None, github_branch=None, webhook_secret=None,
+                requirements_file_id=None) -> int:
     # DIQQAT (xavfsizlik fix): bot_token bu yerda XOM Telegram bot tokeni bo'lishi mumkin
     # (masalan admin_panel.py'dagi test-deploy oqimida). bot_envs.value kabi bu ham
     # platform.db orqali STORAGE_GROUP_ID guruhiga backup qilinadi, shu sabab bot_envs bilan
@@ -435,13 +448,21 @@ def create_bot(owner_id, bot_username, bot_token, code_path, storage_file_id, is
             """INSERT INTO bots
                (owner_id, bot_username, bot_token, code_path, storage_file_id, is_zip, language,
                 build_cmd, start_cmd, display_name, status, created_at, deployed_by,
-                github_url, github_branch, webhook_secret)
-               VALUES (?,?,?,?,?,?,?,?,?,?, 'stopped', ?, ?, ?, ?, ?)""",
+                github_url, github_branch, webhook_secret, requirements_file_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?, 'stopped', ?, ?, ?, ?, ?, ?)""",
             (owner_id, bot_username, encrypted_token, code_path, storage_file_id, int(is_zip), language,
              build_cmd, start_cmd, display_name, int(time.time()), deployed_by,
-             github_url, github_branch, webhook_secret),
+             github_url, github_branch, webhook_secret, requirements_file_id),
         )
         return cur.lastrowid
+
+
+def set_requirements_file_id(bot_id: int, file_id: str):
+    """requirements.txt Telegram STORAGE_GROUP'ga backup qilingandan keyin, uning
+    file_id'sini saqlaydi — platforma qayta ishga tushganda (restore_running_bots)
+    shu file_id orqali requirements.txt qayta tiklanadi."""
+    with get_conn() as conn:
+        conn.execute("UPDATE bots SET requirements_file_id=? WHERE bot_id=?", (file_id, bot_id))
 
 
 def _decrypt_bot_row(row):
