@@ -270,6 +270,14 @@ async def auto_build_cmd(message: Message, state: FSMContext):
 
 @router.message(AddBot.waiting_build_cmd)
 async def receive_build_cmd(message: Message, state: FSMContext):
+    if not message.text:
+        await message.answer(
+            "Bu yerda <b>matn</b> kutilyapti (build buyrug'i), fayl emas.\n"
+            "Agar avtomatik aniqlanishini xohlasang — pastdagi \"✅ Avtomatik\" tugmasini bos, "
+            "aks holda buyruqni matn sifatida yoz (masalan: <code>pip install -r requirements.txt</code>).",
+            parse_mode="HTML",
+        )
+        return
     build_cmd = "" if message.text.strip() == "-" else message.text.strip()
     await state.update_data(build_cmd=build_cmd)
     await state.set_state(AddBot.waiting_start_cmd)
@@ -282,6 +290,13 @@ async def receive_build_cmd(message: Message, state: FSMContext):
 
 @router.message(AddBot.waiting_start_cmd)
 async def receive_start_cmd(message: Message, state: FSMContext):
+    if not message.text:
+        await message.answer(
+            "Bu yerda <b>matn</b> kutilyapti (start buyrug'i), fayl emas.\n"
+            "Masalan: <code>python bot.py</code> deb yozing.",
+            parse_mode="HTML",
+        )
+        return
     start_cmd = message.text.strip()
     await state.update_data(start_cmd=start_cmd, envs={})
     await state.set_state(AddBot.waiting_env)
@@ -316,6 +331,12 @@ async def finish_env(message: Message, state: FSMContext, bot: Bot):
 
 @router.message(AddBot.waiting_env)
 async def receive_env_pair(message: Message, state: FSMContext):
+    if not message.text:
+        await message.answer(
+            "Bu yerda <b>matn</b> kutilyapti (ENV: <code>KEY - VALUE</code>), fayl emas.",
+            parse_mode="HTML",
+        )
+        return
     text = message.text.strip()
     if "-" in text:
         key, _, value = text.partition("-")
