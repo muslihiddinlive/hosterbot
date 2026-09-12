@@ -292,6 +292,7 @@ def edit_bot_menu_kb(bot_id: int, has_env: bool = False) -> InlineKeyboardMarkup
         [InlineKeyboardButton(text="✏️ Nomini o'zgartirish", callback_data=f"rename_bot:{bot_id}")],
         [InlineKeyboardButton(text="📄 Kodni almashtirish", callback_data=f"fix_code:{bot_id}")],
         [InlineKeyboardButton(text="📋 requirements.txt almashtirish", callback_data=f"fix_reqs:{bot_id}")],
+        [InlineKeyboardButton(text="🗄 Oldingi data backup'ni olish", callback_data=f"get_prev_data_backup:{bot_id}")],
     ]
     if has_env:
         rows.append([InlineKeyboardButton(text="🔑 ENV tahrirlash", callback_data=f"fix_env:{bot_id}")])

@@ -649,6 +649,35 @@ async def fix_code_wrong_content_type(message: Message):
 
 # ---------- Crash-fix oqimi: requirements.txt almashtirish ----------
 
+@router.callback_query(F.data.startswith("get_prev_data_backup:"))
+async def cb_get_prev_data_backup(callback: CallbackQuery, bot: Bot):
+    """
+    YANGI FEATURE (xavfsizlik zaxirasi): agar botning ENG SO'NGGI data-backup'i
+    biror sababdan yaroqsiz/bo'sh bo'lib chiqsa (masalan restart paytida hali
+    birinchi backup ulgurmagan bo'lsa), foydalanuvchi shu tugma orqali BIR qadam
+    OLDINGI snapshot'ni qo'lda olib, o'zi tekshirib ko'rishi mumkin.
+    """
+    bot_id = int(callback.data.split(":")[1])
+    bot_row = db.get_bot(bot_id)
+    if not _authorized(callback, bot_row):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+
+    prev_id = bot_row["data_backup_file_id_prev"]
+    if not prev_id:
+        await callback.answer("Oldingi data backup topilmadi.", show_alert=True)
+        return
+
+    try:
+        await bot.send_document(
+            callback.from_user.id, prev_id,
+            caption="🗄 Oldingi data backup (bir qadam avvalgi snapshot)",
+        )
+        await callback.answer()
+    except Exception as e:
+        await callback.answer(f"Xato: {e}", show_alert=True)
+
+
 @router.callback_query(F.data.startswith("fix_reqs:"))
 async def cb_fix_reqs(callback: CallbackQuery, state: FSMContext):
     bot_id = int(callback.data.split(":")[1])

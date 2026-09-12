@@ -186,6 +186,16 @@ def init_db():
         except sqlite3.OperationalError:
             pass
         try:
+            # MUHIM FIX: ilgari yangi data-backup ESKISINI so'zsiz almashtirar edi —
+            # agar yangi snapshot biror sababdan "bo'shab qolgan" holatni aks
+            # ettirsa (masalan restart paytida hali birinchi backup ulgurmagan
+            # bo'lsa), oldingi (yaxshi) versiya ustidan qaytarib bo'lmas darajada
+            # yozilib ketardi. Endi bitta oldingi versiya ham alohida saqlanadi —
+            # kerak bo'lsa qo'lda tiklab olish uchun.
+            conn.execute("ALTER TABLE bots ADD COLUMN data_backup_file_id_prev TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
             conn.execute("ALTER TABLE users ADD COLUMN is_banned INTEGER NOT NULL DEFAULT 0")
         except sqlite3.OperationalError:
             pass
@@ -486,9 +496,19 @@ def set_storage_file_id(bot_id: int, file_id: str, is_zip: bool = None):
 
 
 def set_data_backup_file_id(bot_id: int, file_id: str):
-    """Botning to'liq workdir-snapshot (data) backup'i yangilangandan keyin file_id'sini saqlaydi."""
+    """Botning to'liq workdir-snapshot (data) backup'i yangilangandan keyin file_id'sini saqlaydi.
+
+    MUHIM FIX: eskisini yo'qotmaslik uchun avval uni data_backup_file_id_prev'ga
+    ko'chiramiz — shu bilan kamida BITTA oldingi versiya har doim tiklab olish
+    uchun mavjud bo'ladi (masalan yangi snapshot kutilmaganda "bo'shab qolgan"
+    holatni aks ettirsa)."""
     with get_conn() as conn:
-        conn.execute("UPDATE bots SET data_backup_file_id=? WHERE bot_id=?", (file_id, bot_id))
+        row = conn.execute("SELECT data_backup_file_id FROM bots WHERE bot_id=?", (bot_id,)).fetchone()
+        prev = row["data_backup_file_id"] if row else None
+        conn.execute(
+            "UPDATE bots SET data_backup_file_id_prev=?, data_backup_file_id=? WHERE bot_id=?",
+            (prev, file_id, bot_id),
+        )
 
 
 def set_requirements_file_id(bot_id: int, file_id: str):
