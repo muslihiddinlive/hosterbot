@@ -3,11 +3,21 @@ services/data_backup.py
 
 YANGI FEATURE: har bir hostlangan bot uchun ALOHIDA "disk" — Render Free Tier
 diski ephemeral bo'lgani uchun (har restart'da o'chadi), botning butun ishchi
-papkasi (workdir) davriy ravishda zip qilinib STORAGE_GROUP_ID guruhiga backup
-qilinadi. Bu botning o'zi runtime'da yaratadigan har qanday faylni ham qamrab
-oladi — SQLite baza, JSON/txt saqlash fayllari, yuklab olingan medialar va h.k.
-Ilgari faqat kod (.py/.zip) va requirements.txt alohida backup qilinardi;
-botning O'Z yaratgan ma'lumotlari esa har restart'da butunlay yo'qolardi.
+papkasi (workdir) davriy ravishda zip qilinib DATA STORAGE supergruruhiga
+backup qilinadi. Bu botning o'zi runtime'da yaratadigan har qanday faylni ham
+qamrab oladi — SQLite baza, JSON/txt saqlash fayllari, yuklab olingan
+medialar va h.k. Ilgari faqat kod (.py/.zip) va requirements.txt alohida
+backup qilinardi; botning O'Z yaratgan ma'lumotlari esa har restart'da
+butunlay yo'qolardi.
+
+TOPICS (forum mavzular): agar Data Storage guruhi Telegram'da "Topics"
+rejimida bo'lsa (superadmin buni guruh sozlamalaridan qo'lda yoqadi va botni
+"Manage Topics" huquqi bilan admin qiladi), har bot uchun ALOHIDA mavzu
+(topic) avtomatik ochiladi — shu botning barcha backup'lari faqat o'sha
+mavzu ichiga tushadi, guruh ichida tartibli va qo'lda ham topish oson bo'ladi.
+Agar guruh forum rejimida bo'lmasa, backup'lar shunchaki guruhning umumiy
+oqimiga (topic'siz) tushaveradi — funksionallik buzilmaydi, faqat tartiblanmagan
+bo'ladi.
 
 Platforma qayta ishga tushganda (restore_running_bots), agar bot uchun bunday
 backup mavjud bo'lsa — avval shu umumiy snapshot workdir'ga tiklanadi, so'ng
@@ -22,7 +32,7 @@ import zipfile
 from aiogram import Bot
 from aiogram.types import FSInputFile
 
-from config import STORAGE_GROUP_ID
+import database as db
 
 log = logging.getLogger("hosterbot.data_backup")
 
@@ -58,13 +68,35 @@ def _zip_workdir(workdir: str, zip_path: str) -> int:
     return os.path.getsize(zip_path)
 
 
-async def backup_bot_data(bot: Bot, bot_id: int, workdir: str) -> tuple[str | None, str | None]:
+async def _ensure_topic(bot: Bot, group_id: int, bot_row) -> int | None:
+    """Bot uchun mavjud topic bo'lsa shuni qaytaradi; bo'lmasa yaratishga urinadi.
+    Guruh forum rejimida bo'lmasa (yoki botda huquq yo'q bo'lsa), jimgina None
+    qaytaradi — bu holda backup guruhning umumiy oqimiga tushadi."""
+    if bot_row["data_topic_id"]:
+        return bot_row["data_topic_id"]
+    try:
+        bot_id = bot_row["bot_id"]
+        label = bot_row["bot_username"] or bot_row["display_name"] or f"Bot #{bot_id}"
+        topic = await bot.create_forum_topic(group_id, name=f"#{bot_id} — {label}"[:128])
+        db.set_data_topic_id(bot_id, topic.message_thread_id)
+        return topic.message_thread_id
+    except Exception as e:
+        log.info(f"Bot #{bot_row['bot_id']}: topic yaratib bo'lmadi (guruh forum rejimida emas yoki huquq yo'q): {e}")
+        return None
+
+
+async def backup_bot_data(bot: Bot, bot_row, workdir: str) -> tuple[str | None, str | None]:
     """
-    Botning butun workdir'ini zip qilib STORAGE_GROUP_ID'ga yuboradi.
+    Botning butun workdir'ini zip qilib Data Storage guruhiga (bor bo'lsa —
+    shu botning o'z topic'iga) yuboradi.
     Qaytaradi: (yangi_file_id_yoki_None, xato_matni_yoki_None).
     """
+    bot_id = bot_row["bot_id"]
     if not os.path.isdir(workdir):
         return None, "workdir topilmadi"
+
+    group_id = db.get_data_storage_group_id()
+    topic_id = await _ensure_topic(bot, group_id, bot_row)
 
     zip_path = f"/tmp/hosterbot_data_{bot_id}.zip"
     try:
@@ -73,9 +105,10 @@ async def backup_bot_data(bot: Bot, bot_id: int, workdir: str) -> tuple[str | No
             return None, f"backup {size // (1024*1024)}MB — {MAX_BACKUP_BYTES // (1024*1024)}MB limitidan katta, o'tkazib yuborildi"
 
         sent = await bot.send_document(
-            STORAGE_GROUP_ID,
+            group_id,
             FSInputFile(zip_path, filename=f"bot_{bot_id}_data.zip"),
             caption=f"💾 Bot #{bot_id} — data snapshot",
+            message_thread_id=topic_id,
             disable_notification=True,
         )
         return sent.document.file_id, None
@@ -90,7 +123,8 @@ async def backup_bot_data(bot: Bot, bot_id: int, workdir: str) -> tuple[str | No
 
 
 async def restore_bot_data(bot: Bot, file_id: str, workdir: str) -> bool:
-    """Berilgan file_id'dagi zip'ni yuklab, workdir'ga chiqaradi (mavjud fayllar ustidan yoziladi)."""
+    """Berilgan file_id'dagi zip'ni yuklab, workdir'ga chiqaradi (mavjud fayllar ustidan yoziladi).
+    Topic qaysi guruhda bo'lishidan qat'i nazar ishlaydi — file_id o'zi yetarli."""
     zip_path = f"/tmp/hosterbot_data_restore_{os.path.basename(workdir)}.zip"
     try:
         await bot.download(file_id, destination=zip_path)

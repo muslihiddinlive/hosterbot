@@ -45,6 +45,11 @@ class AdminBanCustomHours(StatesGroup):
     waiting_hours = State()
 
 
+class AdminDataStorage(StatesGroup):
+    """Superadmin — botlar uchun alohida 'disk' (data-backup) supergruruh ID'sini sozlash."""
+    waiting_group_id = State()
+
+
 class AdminBroadcast(StatesGroup):
     waiting_text = State()
 

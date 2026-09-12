@@ -14,7 +14,7 @@ from aiogram.fsm.context import FSMContext
 
 import database as db
 from config import is_admin, is_superadmin, STORAGE_GROUP_ID, ADMIN_IDS, SUPERADMIN_IDS, MAX_BOTS_PER_USER
-from states import AdminMessageUser, AdminSetLimit, AdminStarsSetting, AdminBanCustomHours, AdminBroadcast, AdminTestDeploy, AdminSearchUser, AdminAIProvider
+from states import AdminMessageUser, AdminSetLimit, AdminStarsSetting, AdminBanCustomHours, AdminBroadcast, AdminTestDeploy, AdminSearchUser, AdminAIProvider, AdminDataStorage
 from keyboards import admin_all_bots_kb, admin_bot_view_kb, owner_info_kb, admin_users_kb, admin_user_view_kb, admin_panel_kb, admin_stars_settings_kb, admin_gift_list_kb, admin_self_gift_list_kb, admin_ban_choice_kb, admin_broadcast_confirm_kb, admin_sender_choice_kb, admin_ai_providers_kb, admin_ai_provider_view_kb, admin_ai_provider_kind_kb, admin_ai_cloudflare_model_kb, admin_search_choice_kb, admin_search_qwerty_kb
 from services.deploy_manager import stop_bot_process, start_bot_process, run_build_command, is_running, read_log_tail, bot_link_html
 from services.file_utils import bot_workdir
@@ -200,6 +200,41 @@ async def cb_admin_stars_settings(callback: CallbackQuery):
         reply_markup=admin_stars_settings_kb(),
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == "admin_set_data_storage_group")
+async def cb_admin_set_data_storage_group(callback: CallbackQuery, state: FSMContext):
+    """YANGI FEATURE: botlar uchun 'disk' (data-backup) qaysi Telegram
+    supergruruhga tushishini superadmin shu yerdan sozlaydi. Guruh Topics
+    (forum) rejimida bo'lsa va bot 'Manage Topics' huquqi bilan admin bo'lsa,
+    har bot uchun avtomatik alohida mavzu ochiladi."""
+    if not is_superadmin(callback.from_user.id):
+        await callback.answer("Bu faqat superadminlar uchun.", show_alert=True)
+        return
+    await state.set_state(AdminDataStorage.waiting_group_id)
+    current = db.get_data_storage_group_id()
+    await callback.message.answer(
+        f"🗄 Botlar uchun 'disk' (data-backup) supergruruh ID'sini yuboring "
+        f"(hozir: <code>{current}</code>).\n\n"
+        f"Eslatma: guruhda \"Topics\" (mavzular) yoqilgan va bot \"Manage Topics\" "
+        f"huquqi bilan admin qilingan bo'lishi kerak — aks holda backup'lar "
+        f"guruhning umumiy oqimiga (topic'siz) tushadi.",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(AdminDataStorage.waiting_group_id)
+async def set_data_storage_group(message: Message, state: FSMContext):
+    await state.clear()
+    text = (message.text or "").strip()
+    try:
+        group_id = int(text)
+    except ValueError:
+        await message.answer("Guruh ID butun son bo'lishi kerak (masalan -1001234567890).")
+        return
+    db.set_setting("data_storage_group_id", group_id)
+    await message.answer(f"✅ Botlar diski endi shu guruhga tushadi: <code>{group_id}</code>", parse_mode="HTML")
 
 
 @router.callback_query(F.data == "admin_set_stars_amount")

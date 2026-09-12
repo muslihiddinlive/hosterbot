@@ -429,10 +429,11 @@ async def data_backup_watchdog():
     """
     YANGI FEATURE: har DATA_BACKUP_INTERVAL_SEC soniyada barcha "running" botlarning
     butun workdir'ini (kod + o'zi yaratgan har qanday fayl — baza, JSON, media)
-    zip qilib STORAGE_GROUP_ID'ga backup qiladi. Bu ilgari umuman qilinmagan edi —
-    Render Free Tier'ning ephemeral diski tufayli botning O'Z yaratgan ma'lumotlari
-    har restart'da butunlay yo'qolib qolardi (faqat kod va requirements.txt alohida
-    backup qilinardi). Endi restore_running_bots() bu snapshot'ni ham tiklaydi.
+    zip qilib Data Storage guruhiga (superadmin sozlagan bo'lsa — shu botning
+    o'z Topic'iga) backup qiladi. Bu ilgari umuman qilinmagan edi — Render Free
+    Tier'ning ephemeral diski tufayli botning O'Z yaratgan ma'lumotlari har
+    restart'da butunlay yo'qolib qolardi. Endi restore_running_bots() bu
+    snapshot'ni ham tiklaydi.
     """
     while True:
         await asyncio.sleep(DATA_BACKUP_INTERVAL_SEC)
@@ -442,7 +443,7 @@ async def data_backup_watchdog():
             bot_id = bot_row["bot_id"]
             workdir = bot_row["code_path"] or bot_workdir(bot_id)
             try:
-                file_id, err = await backup_bot_data(bot, bot_id, workdir)
+                file_id, err = await backup_bot_data(bot, bot_row, workdir)
                 if file_id:
                     db.set_data_backup_file_id(bot_id, file_id)
                 elif err:

@@ -312,6 +312,7 @@ def admin_panel_kb(is_superadmin: bool = False) -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton(text="⭐️ Stars narxi sozlamalari", callback_data="admin_stars_settings")])
         rows.append([InlineKeyboardButton(text="💰 Bot Stars balansi (real)", callback_data="admin_real_balance")])
         rows.append([InlineKeyboardButton(text="🤖 AI provayderlar", callback_data="admin_ai_providers")])
+        rows.append([InlineKeyboardButton(text="🗄 Data Storage guruh (botlar diski)", callback_data="admin_set_data_storage_group")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

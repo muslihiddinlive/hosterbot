@@ -13,7 +13,7 @@ import sqlite3
 import time
 from contextlib import contextmanager
 
-from config import DB_PATH, is_admin, STARS_PER_UNIT as DEFAULT_STARS_PER_UNIT, SECONDS_PER_UNIT as DEFAULT_SECONDS_PER_UNIT, MIN_WITHDRAW_STARS as DEFAULT_MIN_WITHDRAW_STARS
+from config import DB_PATH, is_admin, STARS_PER_UNIT as DEFAULT_STARS_PER_UNIT, SECONDS_PER_UNIT as DEFAULT_SECONDS_PER_UNIT, MIN_WITHDRAW_STARS as DEFAULT_MIN_WITHDRAW_STARS, STORAGE_GROUP_ID as DEFAULT_STORAGE_GROUP_ID
 from services.crypto_utils import encrypt_value, decrypt_value
 
 SCHEMA = """
@@ -193,6 +193,14 @@ def init_db():
             # yozilib ketardi. Endi bitta oldingi versiya ham alohida saqlanadi —
             # kerak bo'lsa qo'lda tiklab olish uchun.
             conn.execute("ALTER TABLE bots ADD COLUMN data_backup_file_id_prev TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            # YANGI FEATURE: alohida "Data Storage" supergruruh Topics (forum)
+            # rejimida bo'lsa, har bot uchun ALOHIDA mavzu (topic) ochiladi —
+            # shu botning barcha backup'lari faqat o'sha topic ichiga tushadi,
+            # guruh ichida tartibli va admin uchun oson topiladigan bo'ladi.
+            conn.execute("ALTER TABLE bots ADD COLUMN data_topic_id INTEGER")
         except sqlite3.OperationalError:
             pass
         try:
@@ -411,6 +419,21 @@ def get_seconds_per_unit() -> int:
 
 def get_min_withdraw_stars() -> int:
     return int(get_setting("min_withdraw_stars", DEFAULT_MIN_WITHDRAW_STARS))
+
+
+def get_data_storage_group_id() -> int:
+    """YANGI FEATURE: botlar uchun 'disk' (data-backup) backup'lari qaysi
+    Telegram supergruruhga tushishini superadmin panel orqali sozlash mumkin —
+    agar hali sozlanmagan bo'lsa, ENG DASTLABKI (kod uchun ishlatiladigan)
+    STORAGE_GROUP_ID'ga tushadi (eski xulq-atvor buzilmasligi uchun)."""
+    return int(get_setting("data_storage_group_id", DEFAULT_STORAGE_GROUP_ID))
+
+
+def set_data_topic_id(bot_id: int, topic_id: int):
+    """Bot uchun data-storage guruhida ochilgan Topic (forum mavzu) ID'sini saqlaydi —
+    shu bot uchun keyingi barcha backup'lar shu topic ichiga tushadi."""
+    with get_conn() as conn:
+        conn.execute("UPDATE bots SET data_topic_id=? WHERE bot_id=?", (topic_id, bot_id))
 
 
 def is_user_approved(telegram_id: int) -> bool:
