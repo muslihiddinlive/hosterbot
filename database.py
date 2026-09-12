@@ -179,6 +179,13 @@ def init_db():
         except sqlite3.OperationalError:
             pass
         try:
+            # YANGI FEATURE: har bot uchun "alohida disk" — botning butun workdir'i
+            # (kodi + o'zi runtime'da yaratgan har qanday fayli: baza, JSON, medialar)
+            # davriy ravishda shu file_id orqali backup qilinadi va restart'da tiklanadi.
+            conn.execute("ALTER TABLE bots ADD COLUMN data_backup_file_id TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
             conn.execute("ALTER TABLE users ADD COLUMN is_banned INTEGER NOT NULL DEFAULT 0")
         except sqlite3.OperationalError:
             pass
@@ -476,6 +483,12 @@ def set_storage_file_id(bot_id: int, file_id: str, is_zip: bool = None):
                 "UPDATE bots SET storage_file_id=?, is_zip=? WHERE bot_id=?",
                 (file_id, int(is_zip), bot_id),
             )
+
+
+def set_data_backup_file_id(bot_id: int, file_id: str):
+    """Botning to'liq workdir-snapshot (data) backup'i yangilangandan keyin file_id'sini saqlaydi."""
+    with get_conn() as conn:
+        conn.execute("UPDATE bots SET data_backup_file_id=? WHERE bot_id=?", (file_id, bot_id))
 
 
 def set_requirements_file_id(bot_id: int, file_id: str):

@@ -16,6 +16,7 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 from config import BOT_TOKEN, WEBHOOK_BASE_URL, WEBHOOK_PATH, PORT, ADMIN_IDS, SUPERADMIN_IDS, is_admin
 import database as db
 from services.backup import restore_database, backup_database
+from services.data_backup import backup_bot_data, restore_bot_data
 from services.deploy_manager import is_running, read_log_tail, run_build_command, start_bot_process, stop_bot_process, format_log_block
 from services.file_utils import (
     bot_workdir, extract_zip, resolve_project_root,
@@ -32,6 +33,7 @@ WATCHDOG_INTERVAL_SEC = 60
 BILLING_WATCHDOG_INTERVAL_SEC = 30
 STAR_BALANCE_WATCHDOG_INTERVAL_SEC = 300
 STAR_BALANCE_ALERT_THRESHOLD = 1000
+DATA_BACKUP_INTERVAL_SEC = int(os.environ.get("DATA_BACKUP_INTERVAL_SEC", str(30 * 60)))  # default: 30 daqiqa
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("hosterbot")
@@ -148,6 +150,14 @@ async def restore_running_bots(bot: Bot):
                     break
 
         if code_missing:
+            if bot_row["data_backup_file_id"]:
+                # YANGI FEATURE: avval botning umumiy "disk" snapshot'ini tiklaymiz
+                # (bu botning o'zi yaratgan baza/JSON/media fayllarini ham qamraydi).
+                # Pastdagi qadam (storage_file_id'dan) baribir eng SO'NGGI kodni
+                # buning ustidan qayta yozadi — shu bilan freshness kafolatlanadi.
+                os.makedirs(workdir, exist_ok=True)
+                await restore_bot_data(bot, bot_row["data_backup_file_id"], workdir)
+
             if not bot_row["storage_file_id"]:
                 log.warning(f"{label}: kod fayli yo'qolgan va storage_file_id yo'q — tiklab bo'lmadi.")
                 db.set_bot_status(bot_id, "crashed", None)
@@ -415,6 +425,32 @@ async def star_balance_watchdog():
             log.warning(f"Star balance watchdog xatoligi: {e}")
 
 
+async def data_backup_watchdog():
+    """
+    YANGI FEATURE: har DATA_BACKUP_INTERVAL_SEC soniyada barcha "running" botlarning
+    butun workdir'ini (kod + o'zi yaratgan har qanday fayl — baza, JSON, media)
+    zip qilib STORAGE_GROUP_ID'ga backup qiladi. Bu ilgari umuman qilinmagan edi —
+    Render Free Tier'ning ephemeral diski tufayli botning O'Z yaratgan ma'lumotlari
+    har restart'da butunlay yo'qolib qolardi (faqat kod va requirements.txt alohida
+    backup qilinardi). Endi restore_running_bots() bu snapshot'ni ham tiklaydi.
+    """
+    while True:
+        await asyncio.sleep(DATA_BACKUP_INTERVAL_SEC)
+        for bot_row in db.list_all_bots():
+            if bot_row["status"] != "running":
+                continue
+            bot_id = bot_row["bot_id"]
+            workdir = bot_row["code_path"] or bot_workdir(bot_id)
+            try:
+                file_id, err = await backup_bot_data(bot, bot_id, workdir)
+                if file_id:
+                    db.set_data_backup_file_id(bot_id, file_id)
+                elif err:
+                    log.info(f"Bot #{bot_id}: data backup o'tkazib yuborildi: {err}")
+            except Exception as e:
+                log.warning(f"Bot #{bot_id}: data backup watchdog xatoligi: {e}")
+
+
 async def on_startup(app: web.Application):
     await restore_database(bot)
     db.init_db()
@@ -424,6 +460,7 @@ async def on_startup(app: web.Application):
     asyncio.create_task(auto_unblock_watchdog())
     asyncio.create_task(approval_expiry_watchdog())
     asyncio.create_task(star_balance_watchdog())
+    asyncio.create_task(data_backup_watchdog())
 
     if not WEBHOOK_BASE_URL:
         log.warning(
