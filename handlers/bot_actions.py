@@ -17,6 +17,7 @@ from services.resource_monitor import can_start_new_bot, bot_ram_mb, format_ram_
 from services.file_utils import (
     cleanup_bot_files, write_env_file, extract_zip, resolve_project_root,
     normalize_requirements_filename, fix_all_py_encodings, fix_py_encoding,
+    find_requirements_txt,
 )
 from services.backup import backup_database
 from services.ai_client import ask_ai, build_crash_diagnosis_prompt, AIError
@@ -365,7 +366,38 @@ async def cb_bot_info(callback: CallbackQuery, bot: Bot):
     # Original kod faylini ham yuboramiz (backup guruhidan file_id orqali)
     if bot_row["storage_file_id"]:
         try:
-            await bot.send_document(callback.from_user.id, bot_row["storage_file_id"], caption="📄 Original kod fayli")
+            await bot.send_document(callback.from_user.id, bot_row["storage_file_id"], caption="📄 Kod fayli (eng so'nggi)")
+        except Exception:
+            pass
+
+    # MUHIM FIX: ilgari faqat kod fayli yuborilardi — requirements.txt va ENV
+    # esa umuman fayl sifatida olinmasdi (ENV faqat matn ko'rinishida ko'rsatilardi).
+    # Endi "bot ishlab turgan vaqtida ham kod, ENV, requirements'ni olish" so'roviga
+    # ko'ra uchalasi ham fayl sifatida yuboriladi — botning status'idan (running/
+    # stopped/crashed) qat'i nazar ishlaydi, chunki bular DB/backup'dan olinadi.
+    if bot_row["requirements_file_id"]:
+        try:
+            await bot.send_document(callback.from_user.id, bot_row["requirements_file_id"], caption="📋 requirements.txt (eng so'nggi)")
+        except Exception:
+            pass
+    else:
+        # Alohida backup qilinmagan bo'lsa ham, disk hali joyida bo'lsa (bot
+        # hozir ishlab turganida ko'pincha shunday) — workdir'dan to'g'ridan-to'g'ri o'qib yuboramiz.
+        try:
+            req_path = find_requirements_txt(bot_row["code_path"])
+            if req_path and os.path.isfile(req_path):
+                await bot.send_document(callback.from_user.id, FSInputFile(req_path, filename="requirements.txt"), caption="📋 requirements.txt")
+        except Exception:
+            pass
+
+    if envs:
+        try:
+            env_file_text = "\n".join(f"{r['key']}={r['value']}" for r in envs)
+            env_tmp_path = f"/tmp/bot_{bot_id}_env.txt"
+            with open(env_tmp_path, "w", encoding="utf-8") as f:
+                f.write(env_file_text)
+            await bot.send_document(callback.from_user.id, FSInputFile(env_tmp_path, filename=".env"), caption="🔑 ENV")
+            os.remove(env_tmp_path)
         except Exception:
             pass
 

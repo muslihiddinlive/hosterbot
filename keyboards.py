@@ -256,14 +256,14 @@ def bot_manage_kb(bot_row, has_env: bool = False, viewer_is_vip: bool = False) -
         rows.append([InlineKeyboardButton(
             text="🔁 Qayta build qilib urinish", callback_data=f"bot_rebuild:{bot_row['bot_id']}",
         )])
-        # AI-tashxis faqat "nega qulab tushdi" savoliga javob beradi, shu sabab
-        # faqat crashed holatda ma'noli — boshqa holatda ko'rsatilmaydi.
-        # viewer_is_vip=True bo'lsa (admin/superadmin) — narx o'rniga "bepul"
-        # ko'rsatiladi, chunki bunday foydalanuvchilar uchun AI VIP, bepul.
-        ai_price_label = "bepul" if viewer_is_vip else f"{db.get_ai_help_price_stars()}⭐️"
-        rows.append([InlineKeyboardButton(
-            text=f"🤖 AI yordam ({ai_price_label})", callback_data=f"ai_help:{bot_row['bot_id']}",
-        )])
+    # MUHIM FIX: ilgari "AI yordam" faqat crashed holatda ko'rsatilardi, aslida
+    # handler holatga bog'liq emas — foydalanuvchi ISHLAB TURGAN botini ham AI
+    # yordamida tahlil qildirishi/tahrirlatishi kerak bo'lishi mumkin (nafaqat
+    # qulagandan keyin). Shu sabab endi har doim ko'rinadi.
+    ai_price_label = "bepul" if viewer_is_vip else f"{db.get_ai_help_price_stars()}⭐️"
+    rows.append([InlineKeyboardButton(
+        text=f"🤖 AI yordam ({ai_price_label})", callback_data=f"ai_help:{bot_row['bot_id']}",
+    )])
     # "🛠 Botni tahrirlash" (kod/requirements/env almashtirish) botning holatidan
     # QAT'I NAZAR har doim ko'rsatiladi — foydalanuvchi ishlab turgan botni ham
     # yangilashi mumkin bo'lishi kerak, faqat crash bo'lgandagina emas.
