@@ -160,36 +160,76 @@ async def restore_running_bots(bot: Bot):
                 os.makedirs(workdir, exist_ok=True)
                 await restore_bot_data(bot, bot_row["data_backup_file_id"], workdir)
 
+            restored_from_github = False
             if not bot_row["storage_file_id"]:
-                log.warning(f"{label}: kod fayli yo'qolgan va storage_file_id yo'q — tiklab bo'lmadi.")
-                db.set_bot_status(bot_id, "crashed", None)
-                await notify_bot_down(
-                    bot, bot_row,
-                    "platforma qayta ishga tushdi (Render restart), lekin bu botning kod fayli "
-                    "diskda ham, zaxirada ham topilmadi — botni qayta yuklashingiz kerak.",
-                )
-                continue
-            try:
-                tmp_path = os.path.join(workdir, "_restore_download")
-                await bot.download(bot_row["storage_file_id"], destination=tmp_path)
-                if bot_row["is_zip"]:
-                    extract_zip(tmp_path, workdir)
-                    os.remove(tmp_path)
-                    workdir = resolve_project_root(workdir)
+                if bot_row.get("github_url"):
+                    # MUHIM FIX: GitHub orqali deploy qilingan botlar hech qachon
+                    # Telegram'ga backup qilinmagan (kodning "manbasi" GitHub deb
+                    # hisoblangan) — shu sabab platforma yangilanganda ular uchun
+                    # storage_file_id doim None bo'lib, avval bunday botlar
+                    # umuman TIKLANMASDAN "crashed" deb qolib ketardi. Endi bunday
+                    # holatda kodni to'g'ridan-to'g'ri GitHub'ning o'zidan qayta
+                    # yuklab olamiz (xuddi push-webhook'dagi kabi).
+                    from services.github_deploy import parse_github_url
+                    gh_tmp_dir = f"/tmp/gh_restore_{bot_id}"
+                    try:
+                        owner, repo = parse_github_url(bot_row["github_url"])
+                        branch = bot_row.get("github_branch") or "main"
+                        os.makedirs(gh_tmp_dir, exist_ok=True)
+                        zip_path = os.path.join(gh_tmp_dir, f"{repo}.zip")
+                        await download_repo_zip(owner, repo, zip_path, branch=branch)
+                        extract_dir = os.path.join(gh_tmp_dir, "extracted")
+                        extract_zip(zip_path, extract_dir)
+                        project_root = resolve_project_root(extract_dir)
+                        if os.path.isdir(workdir):
+                            shutil.rmtree(workdir, ignore_errors=True)
+                        shutil.copytree(project_root, workdir)
+                        normalize_requirements_filename(workdir)
+                        fix_all_py_encodings(workdir)
+                        restored_from_github = True
+                    except Exception as e:
+                        log.warning(f"{label}: GitHub'dan qayta yuklashda xato: {e}")
+                        db.set_bot_status(bot_id, "crashed", None)
+                        await notify_bot_down(
+                            bot, bot_row,
+                            f"platforma yangilandi, bu bot GitHub orqali deploy qilingan edi, "
+                            f"lekin qayta yuklab bo'lmadi: {e}",
+                        )
+                        continue
+                    finally:
+                        shutil.rmtree(gh_tmp_dir, ignore_errors=True)
                 else:
-                    match = re.search(r'([^\s"\']+\.py)', start_cmd)
-                    py_name = os.path.basename(match.group(1)) if match else "main.py"
-                    os.replace(tmp_path, os.path.join(workdir, py_name))
-                normalize_requirements_filename(workdir)
-                fix_all_py_encodings(workdir)
-            except Exception as e:
-                log.warning(f"{label}: kodni tiklashda xato: {e}")
-                db.set_bot_status(bot_id, "crashed", None)
-                await notify_bot_down(
-                    bot, bot_row,
-                    f"platforma qayta ishga tushdi, lekin kodni zaxiradan tiklashda xato: {e}",
-                )
-                continue
+                    log.warning(f"{label}: kod fayli yo'qolgan va storage_file_id yo'q — tiklab bo'lmadi.")
+                    db.set_bot_status(bot_id, "crashed", None)
+                    await notify_bot_down(
+                        bot, bot_row,
+                        "platforma yangilandi, lekin bu botning kod fayli "
+                        "diskda ham, zaxirada ham topilmadi — botni qayta yuklashingiz kerak.",
+                    )
+                    continue
+
+            if not restored_from_github:
+                try:
+                    tmp_path = os.path.join(workdir, "_restore_download")
+                    await bot.download(bot_row["storage_file_id"], destination=tmp_path)
+                    if bot_row["is_zip"]:
+                        extract_zip(tmp_path, workdir)
+                        os.remove(tmp_path)
+                        workdir = resolve_project_root(workdir)
+                    else:
+                        match = re.search(r'([^\s"\']+\.py)', start_cmd)
+                        py_name = os.path.basename(match.group(1)) if match else "main.py"
+                        os.replace(tmp_path, os.path.join(workdir, py_name))
+                    normalize_requirements_filename(workdir)
+                    fix_all_py_encodings(workdir)
+                except Exception as e:
+                    log.warning(f"{label}: kodni tiklashda xato: {e}")
+                    db.set_bot_status(bot_id, "crashed", None)
+                    await notify_bot_down(
+                        bot, bot_row,
+                        f"platforma yangilandi, lekin kodni zaxiradan tiklashda xato: {e}",
+                    )
+                    continue
         elif bot_row["is_zip"]:
             # Kod diskda hali joyida (disk o'chmagan) — lekin zip botlarda haqiqiy
             # loyiha ichki wrapper papkada bo'lishi mumkin. workdir'ni shunga moslab
@@ -219,7 +259,7 @@ async def restore_running_bots(bot: Bot):
                 db.set_bot_status(bot_id, "crashed", None)
                 await notify_bot_down(
                     bot, bot_row,
-                    "platforma qayta ishga tushgach, botni qayta build qilishda xato yuz berdi.",
+                    "platforma yangilangach, botni qayta build qilishda xato yuz berdi.",
                     log_tail=read_log_tail(workdir, n_lines=30),
                 )
                 continue
@@ -231,7 +271,7 @@ async def restore_running_bots(bot: Bot):
             db.set_bot_status(bot_id, "crashed", None)
             await notify_bot_down(
                 bot, bot_row,
-                f"platforma qayta ishga tushgach, botni ishga tushirishda xato: {e}",
+                f"platforma yangilangach, botni ishga tushirishda xato: {e}",
                 log_tail=read_log_tail(workdir, n_lines=30),
             )
 

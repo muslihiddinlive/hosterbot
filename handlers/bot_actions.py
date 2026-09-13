@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import asyncio
+import shutil
 
 from aiogram import Router, F, Bot
 from aiogram.types import CallbackQuery, Message, FSInputFile
@@ -561,8 +562,10 @@ async def cb_fix_code(callback: CallbackQuery, state: FSMContext):
     await state.update_data(fix_bot_id=bot_id)
     await state.set_state(FixCode.waiting_file)
     await callback.message.answer(
-        "📄 Yangi <b>.py</b> faylni yuboring — eski kod faqat yangi fayl muvaffaqiyatli "
-        "qabul qilingandan SO'NG o'chiriladi (hozircha eski kod xavfsiz saqlanadi).\n\n"
+        "📄 Yangi <b>.py</b> faylni yuboring, YOKI 🐙 GitHub repo linkini yuboring "
+        "(masalan <code>https://github.com/owner/repo</code>, faqat public repo) — "
+        "eski kod faqat yangisi muvaffaqiyatli qabul qilingandan SO'NG almashtiriladi "
+        "(hozircha eski kod xavfsiz saqlanadi).\n\n"
         "Bekor qilish uchun pastdagi tugmani bosing.",
         parse_mode="HTML",
         reply_markup=cancel_kb(),
@@ -650,6 +653,89 @@ async def receive_fix_code_file(message: Message, state: FSMContext, bot: Bot):
     await _rebuild_and_start(bot_id, message.bot, message)
 
 
+@router.message(FixCode.waiting_file, F.text)
+async def receive_fix_code_github(message: Message, state: FSMContext, bot: Bot):
+    """
+    YANGI FEATURE: 'Kodni almashtirish' endi faqat .py fayl emas, GitHub repo
+    linki orqali ham ishlaydi — xuddi dastlabki 'GitHub orqali deploy' bilan
+    bir xil mexanizm. Muvaffaqiyatli bo'lsa, bot shu repo'ga BOG'LANADI
+    (github_url/branch/webhook_secret yoziladi) — shundan keyin push-webhook
+    orqali avtomatik qayta deploy VA platforma restart'da GitHub'dan qayta
+    tiklanish imkoniyatiga ega bo'ladi, avval qanday deploy qilingan bo'lishidan
+    qat'i nazar.
+    """
+    from services.github_deploy import parse_github_url, download_repo_zip, generate_webhook_secret, GitHubDeployError
+
+    url = (message.text or "").strip()
+    try:
+        owner, repo = parse_github_url(url)
+    except GitHubDeployError:
+        await message.answer(
+            "Iltimos, <b>.py</b> faylni (document sifatida) YOKI GitHub repo linkini "
+            "(masalan <code>https://github.com/owner/repo</code>) yuboring.",
+            parse_mode="HTML",
+        )
+        return
+
+    data = await state.get_data()
+    bot_id = data.get("fix_bot_id")
+    bot_row = db.get_bot(bot_id)
+    if bot_row is None or (bot_row["owner_id"] != message.from_user.id and not is_admin(message.from_user.id)):
+        await state.clear()
+        await message.answer("Ruxsat yo'q yoki bot topilmadi.", reply_markup=main_menu_kb(is_admin=is_admin(message.from_user.id)))
+        return
+
+    status_msg = await message.answer(f"⏳ <code>{owner}/{repo}</code> yuklab olinmoqda...", parse_mode="HTML")
+    workdir = bot_row["code_path"]
+    tmp_dir = f"/tmp/fix_code_gh_{bot_id}"
+    os.makedirs(tmp_dir, exist_ok=True)
+    zip_path = os.path.join(tmp_dir, f"{repo}.zip")
+
+    try:
+        branch = await download_repo_zip(owner, repo, zip_path)
+    except GitHubDeployError as e:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        await status_msg.edit_text(f"❌ {e}")
+        return
+    except Exception as e:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        log.exception("fix_code: GitHub'dan yuklashda kutilmagan xato")
+        await status_msg.edit_text(f"❌ Kutilmagan xato: {e}")
+        return
+
+    try:
+        extract_dir = os.path.join(tmp_dir, "extracted")
+        extract_zip(zip_path, extract_dir)
+        project_root = resolve_project_root(extract_dir)
+        if os.path.isdir(workdir):
+            shutil.rmtree(workdir, ignore_errors=True)
+        shutil.copytree(project_root, workdir)
+        normalize_requirements_filename(workdir)
+        fix_all_py_encodings(workdir)
+
+        # Kodni STORAGE_GROUP_ID'ga ham backup qilamiz (repo keyinchalik
+        # o'chirilsa/yopilsa ham qayta tiklash imkoniyati qolsin uchun) va
+        # botni shu repo'ga bog'laymiz.
+        sent = await bot.send_document(
+            STORAGE_GROUP_ID, FSInputFile(zip_path, filename=f"{repo}.zip"),
+            caption=f"{repo}.zip (GitHub orqali almashtirilgan) — Bot #{bot_id}, Owner: {bot_row['owner_id']}",
+        )
+        db.set_storage_file_id(bot_id, sent.document.file_id, is_zip=True)
+        webhook_secret = bot_row["webhook_secret"] or generate_webhook_secret()
+        db.set_bot_github_link(bot_id, f"https://github.com/{owner}/{repo}", branch, webhook_secret)
+    except Exception as e:
+        log.exception("fix_code: GitHub kodini joylashtirishda xato")
+        await status_msg.edit_text(f"⚠️ Kodni joylashtirishda xato: {e}")
+        return
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    await status_msg.edit_text(f"✅ <code>{owner}/{repo}</code> (branch: {branch}) yuklab olindi va joylashtirildi.", parse_mode="HTML")
+    await state.clear()
+    await message.answer("Qayta build va ishga tushirilmoqda...")
+    await _rebuild_and_start(bot_id, message.bot, message)
+
+
 @router.message(FixCode.waiting_file)
 async def fix_code_wrong_content_type(message: Message):
     await message.answer("Iltimos, .py faylni <b>document</b> (fayl) sifatida yuboring.", parse_mode="HTML")
@@ -676,10 +762,10 @@ async def cb_webhook_proxy_on(callback: CallbackQuery, bot: Bot):
     await callback.message.answer(
         f"🌐 Webhook proxy yoqildi.\n\n"
         f"Bot manzili: <code>{public_url}</code>\n\n"
-        f"Bot kodi ichida <code>RENDER_EXTERNAL_URL</code> yoki <code>WEBHOOK_HOST</code> "
-        f"tekshirsa — avtomatik shu manzil beriladi. UptimeRobot yoki boshqa monitoring "
-        f"uchun shu manzilga (kerak bo'lsa oxiriga botning o'z yo'lini qo'shib, masalan "
-        f"<code>{public_url}/health</code>) ulanishingiz mumkin.\n\n"
+        f"Bot kodi o'zining webhook sozlamasini avtomatik shu manzildan oladi. "
+        f"UptimeRobot yoki boshqa monitoring uchun shu manzilga (kerak bo'lsa oxiriga "
+        f"botning o'z yo'lini qo'shib, masalan <code>{public_url}/health</code>) "
+        f"ulanishingiz mumkin.\n\n"
         f"O'zgarish kuchga kirishi uchun bot qayta ishga tushirilmoqda...",
         parse_mode="HTML",
     )

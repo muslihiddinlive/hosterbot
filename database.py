@@ -546,6 +546,18 @@ def create_bot(owner_id, bot_username, bot_token, code_path, storage_file_id, is
         return cur.lastrowid
 
 
+def set_bot_github_link(bot_id: int, github_url: str, github_branch: str, webhook_secret: str):
+    """Mavjud botni GitHub repo'ga bog'laydi (masalan 'Kodni almashtirish' orqali
+    GitHub havolasi yuborilganda) — shundan keyin bot ham push-webhook orqali
+    avtomatik qayta deploy imkoniyatiga, ham platforma restart'da GitHub'dan
+    qayta tiklanish imkoniyatiga ega bo'ladi (storage_file_id yo'q/eskirgan bo'lsa ham)."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE bots SET github_url=?, github_branch=?, webhook_secret=? WHERE bot_id=?",
+            (github_url, github_branch, webhook_secret, bot_id),
+        )
+
+
 def set_storage_file_id(bot_id: int, file_id: str, is_zip: bool = None):
     """Botning asosiy kodi (.py/.zip) qayta backup qilingandan keyin uning yangi
     file_id'sini saqlaydi — platforma qayta ishga tushganda (restore_running_bots)
