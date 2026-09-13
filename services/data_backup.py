@@ -85,6 +85,33 @@ async def _ensure_topic(bot: Bot, group_id: int, bot_row) -> int | None:
         return None
 
 
+def _workdir_signature(workdir: str) -> tuple:
+    """Yengil 'imzo' — fayllarni o'qimasdan, faqat soni/umumiy hajmi/eng so'nggi
+    o'zgartirilgan vaqti orqali workdir o'zgarganmi-yo'qmi tekshirish uchun.
+    Bu har 1 soniyada ko'p bot uchun ham chaqirilaveradigan bo'lgani uchun
+    ATAYLAB tez — hech qanday fayl kontenti o'qilmaydi, faqat os.stat()."""
+    total_size = 0
+    max_mtime = 0.0
+    count = 0
+    try:
+        for root, dirs, files in os.walk(workdir):
+            dirs[:] = [d for d in dirs if d not in _EXCLUDED_DIR_NAMES]
+            for fname in files:
+                if fname.endswith(_EXCLUDED_FILE_SUFFIXES):
+                    continue
+                try:
+                    st = os.stat(os.path.join(root, fname))
+                except OSError:
+                    continue
+                total_size += st.st_size
+                if st.st_mtime > max_mtime:
+                    max_mtime = st.st_mtime
+                count += 1
+    except OSError:
+        pass
+    return (count, total_size, max_mtime)
+
+
 async def backup_bot_data(bot: Bot, bot_row, workdir: str) -> tuple[str | None, str | None]:
     """
     Botning butun workdir'ini zip qilib Data Storage guruhiga (bor bo'lsa —

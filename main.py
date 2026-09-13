@@ -16,7 +16,7 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 from config import BOT_TOKEN, WEBHOOK_BASE_URL, WEBHOOK_PATH, PORT, ADMIN_IDS, SUPERADMIN_IDS, is_admin
 import database as db
 from services.backup import restore_database, backup_database
-from services.data_backup import backup_bot_data, restore_bot_data
+from services.data_backup import backup_bot_data, restore_bot_data, _workdir_signature
 from services.deploy_manager import is_running, read_log_tail, run_build_command, start_bot_process, stop_bot_process, format_log_block
 from services.file_utils import (
     bot_workdir, extract_zip, resolve_project_root,
@@ -33,7 +33,8 @@ WATCHDOG_INTERVAL_SEC = 60
 BILLING_WATCHDOG_INTERVAL_SEC = 30
 STAR_BALANCE_WATCHDOG_INTERVAL_SEC = 300
 STAR_BALANCE_ALERT_THRESHOLD = 1000
-DATA_BACKUP_INTERVAL_SEC = int(os.environ.get("DATA_BACKUP_INTERVAL_SEC", str(10 * 60)))  # default: 10 daqiqa (shutdown hook rejalashtirilgan restart'larni alohida qamraydi)
+DATA_CHANGE_CHECK_INTERVAL_SEC = 1   # workdir har necha soniyada tekshiriladi (yengil, tez)
+DATA_CHANGE_DEBOUNCE_SEC = 2         # o'zgarish sezilgandan necha soniya keyin backup qilinadi
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("hosterbot")
@@ -427,29 +428,46 @@ async def star_balance_watchdog():
 
 async def data_backup_watchdog():
     """
-    YANGI FEATURE: har DATA_BACKUP_INTERVAL_SEC soniyada barcha "running" botlarning
-    butun workdir'ini (kod + o'zi yaratgan har qanday fayl — baza, JSON, media)
-    zip qilib Data Storage guruhiga (superadmin sozlagan bo'lsa — shu botning
-    o'z Topic'iga) backup qiladi. Bu ilgari umuman qilinmagan edi — Render Free
-    Tier'ning ephemeral diski tufayli botning O'Z yaratgan ma'lumotlari har
-    restart'da butunlay yo'qolib qolardi. Endi restore_running_bots() bu
-    snapshot'ni ham tiklaydi.
+    YANGI (o'zgarish-asosli): endi belgilangan interval bilan EMAS, balki
+    HAR BOT UCHUN workdir'da haqiqiy o'zgarish bo'lgandagina backup qilinadi —
+    "hech narsa o'zgarmagan bo'lsa, hech qanday backup ham yo'q" tamoyili bilan.
+
+    Ishlash tamoyili: har DATA_CHANGE_CHECK_INTERVAL_SEC (1) soniyada workdir'ning
+    YENGIL imzosi (fayl soni/hajmi/vaqti — kontentni o'qimasdan) tekshiriladi.
+    O'zgarish birinchi marta sezilgan ONDA "muddat" DATA_CHANGE_DEBOUNCE_SEC (2)
+    soniyaga belgilanadi — shu 2 soniya ichida yana necha marta o'zgarish kelsa
+    ham, muddat SURILMAYDI (bitta backup barchasini birga oladi). Muddat kelganda,
+    O'SHA PAYTDAGI holat backup qilinadi. Agar backup davomida (upload paytida)
+    yana yozish bo'lib qolsa, u holat diskda/RAM'da qoladi va KEYINGI tekshiruv
+    siklida yangi o'zgarish sifatida avtomatik tutib olinadi — hech narsa
+    yo'qolmaydi, faqat navbatdagi backup'ga kiradi.
     """
+    last_sig: dict[int, tuple] = {}
+    due_at: dict[int, float] = {}
     while True:
-        await asyncio.sleep(DATA_BACKUP_INTERVAL_SEC)
+        await asyncio.sleep(DATA_CHANGE_CHECK_INTERVAL_SEC)
+        now = time.time()
         for bot_row in db.list_all_bots():
             if bot_row["status"] != "running":
                 continue
             bot_id = bot_row["bot_id"]
             workdir = bot_row["code_path"] or bot_workdir(bot_id)
-            try:
-                file_id, err = await backup_bot_data(bot, bot_row, workdir)
-                if file_id:
-                    db.set_data_backup_file_id(bot_id, file_id)
-                elif err:
-                    log.info(f"Bot #{bot_id}: data backup o'tkazib yuborildi: {err}")
-            except Exception as e:
-                log.warning(f"Bot #{bot_id}: data backup watchdog xatoligi: {e}")
+            sig = _workdir_signature(workdir)
+
+            if last_sig.get(bot_id) != sig:
+                last_sig[bot_id] = sig
+                due_at.setdefault(bot_id, now + DATA_CHANGE_DEBOUNCE_SEC)
+                continue
+
+            if bot_id in due_at and now >= due_at.pop(bot_id):
+                try:
+                    file_id, err = await backup_bot_data(bot, bot_row, workdir)
+                    if file_id:
+                        db.set_data_backup_file_id(bot_id, file_id)
+                    elif err:
+                        log.info(f"Bot #{bot_id}: data backup o'tkazib yuborildi: {err}")
+                except Exception as e:
+                    log.warning(f"Bot #{bot_id}: data backup watchdog xatoligi: {e}")
 
 
 async def on_startup(app: web.Application):
