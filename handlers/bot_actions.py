@@ -878,17 +878,14 @@ async def cb_fix_env(callback: CallbackQuery, state: FSMContext):
         return
 
     envs = db.list_envs(bot_id)
-    if not envs:
-        await callback.answer("Bu botda hozircha ENV yo'q.", show_alert=True)
-        return
-
-    env_list = "\n".join(f"• <code>{html.escape(e['key'])}</code>" for e in envs)
+    env_list = "\n".join(f"• <code>{html.escape(e['key'])}</code>" for e in envs) if envs else "<i>(hozircha ENV yo'q)</i>"
     await state.update_data(fix_bot_id=bot_id)
     await state.set_state(FixEnv.waiting_key_value)
     await callback.message.answer(
         f"🔑 Mavjud ENV kalitlari:\n{env_list}\n\n"
-        f"Yangilamoqchi bo'lgan qiymatni <code>KEY=YANGI_QIYMAT</code> shaklida yuboring "
-        f"(bir vaqtda bitta ENV).",
+        f"<code>KEY=QIYMAT</code> shaklida yuboring (bir vaqtda bitta ENV) — "
+        f"agar KEY yuqoridagi ro'yxatda bo'lsa qiymati yangilanadi, bo'lmasa "
+        f"YANGI ENV sifatida qo'shiladi.",
         parse_mode="HTML",
         reply_markup=cancel_kb(),
     )
@@ -918,19 +915,14 @@ async def receive_fix_env_value(message: Message, state: FSMContext, bot: Bot):
         return
 
     existing_keys = {e["key"] for e in db.list_envs(bot_id)}
-    if key not in existing_keys:
-        await message.answer(
-            f"⚠️ <code>{html.escape(key)}</code> bu botda mavjud emas. Faqat mavjud ENV kalitlarini "
-            f"tahrirlash mumkin (yangi ENV qo'shish uchun botni qayta deploy qiling).",
-            parse_mode="HTML",
-        )
-        return
+    is_new = key not in existing_keys
 
     db.upsert_env(bot_id, key, value)
     write_env_file(bot_id, {e["key"]: e["value"] for e in db.list_envs(bot_id)})
     await state.clear()
 
-    await message.answer(f"✅ <code>{html.escape(key)}</code> yangilandi. Qayta build va ishga tushirilmoqda...", parse_mode="HTML")
+    verb = "qo'shildi" if is_new else "yangilandi"
+    await message.answer(f"✅ <code>{html.escape(key)}</code> {verb}. Qayta build va ishga tushirilmoqda...", parse_mode="HTML")
     await _rebuild_and_start(bot_id, message.bot, message)
 
 

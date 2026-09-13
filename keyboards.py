@@ -294,8 +294,8 @@ def edit_bot_menu_kb(bot_id: int, has_env: bool = False, webhook_proxy_enabled: 
         [InlineKeyboardButton(text="📋 requirements.txt almashtirish", callback_data=f"fix_reqs:{bot_id}")],
         [InlineKeyboardButton(text="🗄 Oldingi data backup'ni olish", callback_data=f"get_prev_data_backup:{bot_id}")],
     ]
-    if has_env:
-        rows.append([InlineKeyboardButton(text="🔑 ENV tahrirlash", callback_data=f"fix_env:{bot_id}")])
+    env_label = "🔑 ENV tahrirlash/qo'shish" if has_env else "🔑 ENV qo'shish"
+    rows.append([InlineKeyboardButton(text=env_label, callback_data=f"fix_env:{bot_id}")])
     if webhook_proxy_enabled:
         rows.append([InlineKeyboardButton(text="🌐 Webhook proxy: YOQILGAN (o'chirish)", callback_data=f"webhook_proxy_off:{bot_id}")])
     else:
@@ -495,8 +495,8 @@ def crash_notify_kb(bot_id: int, has_env: bool = False, viewer_is_vip: bool = Fa
         ],
     ]
     env_row = []
-    if has_env:
-        env_row.append(InlineKeyboardButton(text="🔑 ENV tahrirlash", callback_data=f"fix_env:{bot_id}"))
+    env_label = "🔑 ENV tahrirlash/qo'shish" if has_env else "🔑 ENV qo'shish"
+    env_row.append(InlineKeyboardButton(text=env_label, callback_data=f"fix_env:{bot_id}"))
     ai_price_label = "bepul" if viewer_is_vip else f"{db.get_ai_help_price_stars()}⭐️"
     env_row.append(InlineKeyboardButton(
         text=f"🤖 AI yordam ({ai_price_label})", callback_data=f"ai_help:{bot_id}",
