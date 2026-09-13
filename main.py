@@ -33,7 +33,7 @@ WATCHDOG_INTERVAL_SEC = 60
 BILLING_WATCHDOG_INTERVAL_SEC = 30
 STAR_BALANCE_WATCHDOG_INTERVAL_SEC = 300
 STAR_BALANCE_ALERT_THRESHOLD = 1000
-DATA_BACKUP_INTERVAL_SEC = int(os.environ.get("DATA_BACKUP_INTERVAL_SEC", str(30 * 60)))  # default: 30 daqiqa
+DATA_BACKUP_INTERVAL_SEC = int(os.environ.get("DATA_BACKUP_INTERVAL_SEC", str(10 * 60)))  # default: 10 daqiqa (shutdown hook rejalashtirilgan restart'larni alohida qamraydi)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("hosterbot")
@@ -475,6 +475,37 @@ async def on_startup(app: web.Application):
 
 
 async def on_shutdown(app: web.Application):
+    # MUHIM FIX: Render odatda process'ni o'chirishdan oldin SIGTERM yuborib,
+    # bir necha soniya "muhlat" beradi (keyin SIGKILL). Shu muhlatdan foydalanib,
+    # barcha ishlab turgan botlarning DATA BACKUP'ini oxirgi marta olib
+    # ulguramiz — bu davriy (DATA_BACKUP_INTERVAL_SEC) intervalning qoldirgan
+    # "yo'qotish oynasi"ni REJALASHTIRILGAN har qanday restart/redeploy/spin-down
+    # uchun deyarli nolga tushiradi. Faqat process SIGNALSIZ, kutilmagan tarzda
+    # o'lib qolsa (masalan qattiq OOM-kill) — bu himoya ishlamaydi, davriy
+    # backup esa o'shanday holatlar uchun ikkinchi qatlam bo'lib qoladi.
+    try:
+        running_bots = [r for r in db.list_all_bots() if r["status"] == "running"]
+        if running_bots:
+            log.info(f"Shutdown: {len(running_bots)} ta ishlab turgan bot uchun so'nggi data backup olinmoqda...")
+
+            async def _final_backup(bot_row):
+                workdir = bot_row["code_path"] or bot_workdir(bot_row["bot_id"])
+                try:
+                    file_id, err = await backup_bot_data(bot, bot_row, workdir)
+                    if file_id:
+                        db.set_data_backup_file_id(bot_row["bot_id"], file_id)
+                except Exception as e:
+                    log.warning(f"Bot #{bot_row['bot_id']}: shutdown backup xatoligi: {e}")
+
+            await asyncio.wait_for(
+                asyncio.gather(*(_final_backup(r) for r in running_bots), return_exceptions=True),
+                timeout=20,
+            )
+    except asyncio.TimeoutError:
+        log.warning("Shutdown backup: 20s muhlat tugadi, ulgurgan botlarniki saqlandi.")
+    except Exception as e:
+        log.warning(f"Shutdown backup umumiy xatoligi: {e}")
+
     # DIQQAT: bu yerda bot.delete_webhook() ATAYLAB chaqirilmaydi.
     # Render service'ni istalgan sababdan (redeploy, ichki restart, spin-down) qayta
     # ishga tushirishi mumkin — agar shutdown paytida webhook o'chirilsa-yu, yangi
