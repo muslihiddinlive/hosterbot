@@ -1543,10 +1543,23 @@ async def ai_provider_model_entered(message: Message, state: FSMContext):
         return
     await state.update_data(ai_model=model)
     await state.set_state(AdminAIProvider.waiting_daily_limit)
-    await message.answer(
-        "Kunlik so'rov limiti nechta bo'lsin? (0 = cheklovsiz — Cloudflare dashboard'idagi "
-        "haqiqiy Neuron sarfingizga qarab belgilang, masalan: 40):"
-    )
+
+    data = await state.get_data()
+    if data.get("ai_kind") == "cloudflare":
+        # MUHIM FIX: bu matn ilgari BARCHA provayderlar uchun (jumladan Vercel,
+        # OpenRouter va h.k.) bir xil ko'rsatilardi, garchi "Cloudflare Neuron"
+        # faqat aynan Cloudflare Workers AI'ga tegishli bo'lsa ham.
+        hint = (
+            "Kunlik so'rov limiti nechta bo'lsin? (0 = cheklovsiz — Cloudflare dashboard'idagi "
+            "haqiqiy Neuron sarfingizga qarab belgilang, masalan: 40):"
+        )
+    else:
+        hint = (
+            "Kunlik so'rov limiti nechta bo'lsin? (0 = cheklovsiz — xizmatingizning "
+            "(masalan Vercel/OpenRouter) haqiqiy narxlash yoki kvota siyosatiga qarab "
+            "belgilang, masalan: 40):"
+        )
+    await message.answer(hint)
 
 
 @router.message(AdminAIProvider.waiting_daily_limit)
