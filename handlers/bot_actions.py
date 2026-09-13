@@ -375,20 +375,28 @@ async def cb_bot_info(callback: CallbackQuery, bot: Bot):
     # Endi "bot ishlab turgan vaqtida ham kod, ENV, requirements'ni olish" so'roviga
     # ko'ra uchalasi ham fayl sifatida yuboriladi — botning status'idan (running/
     # stopped/crashed) qat'i nazar ishlaydi, chunki bular DB/backup'dan olinadi.
+    req_sent = False
     if bot_row["requirements_file_id"]:
         try:
             await bot.send_document(callback.from_user.id, bot_row["requirements_file_id"], caption="📋 requirements.txt (eng so'nggi)")
+            req_sent = True
         except Exception:
             pass
-    else:
+    if not req_sent:
         # Alohida backup qilinmagan bo'lsa ham, disk hali joyida bo'lsa (bot
         # hozir ishlab turganida ko'pincha shunday) — workdir'dan to'g'ridan-to'g'ri o'qib yuboramiz.
         try:
             req_path = find_requirements_txt(bot_row["code_path"])
             if req_path and os.path.isfile(req_path):
                 await bot.send_document(callback.from_user.id, FSInputFile(req_path, filename="requirements.txt"), caption="📋 requirements.txt")
+                req_sent = True
         except Exception:
             pass
+    if not req_sent:
+        # MUHIM FIX: ilgari bu holatda hech narsa yuborilmasdi va hech qanday
+        # xabar ham chiqmasdi — foydalanuvchi buni "yuklanmadi" (xato) deb
+        # tushunishi mumkin edi. Endi aniq va ochiq xabar beriladi.
+        await callback.message.answer("📋 requirements.txt yo'q (bot deploy qilinganda kiritilmagan yoki hali topilmadi).")
 
     if envs:
         try:
