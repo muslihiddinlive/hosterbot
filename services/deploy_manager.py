@@ -19,6 +19,9 @@ import signal
 import sys
 import threading
 
+import database as db
+from config import WEBHOOK_BASE_URL
+
 from config import BOT_MEMORY_LIMIT_MB, BOT_CPU_TIME_LIMIT_SEC
 from services.deploy_log import write_stage
 
@@ -166,6 +169,22 @@ def start_bot_process(bot_id: int, workdir: str, start_cmd: str, env_pairs: dict
     SAFE_ENV_KEYS = {"PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "PYTHONIOENCODING", "TMPDIR"}
     full_env = {k: v for k, v in os.environ.items() if k in SAFE_ENV_KEYS}
     full_env.update(env_pairs)
+
+    # YANGI FEATURE: bot o'z ichida webhook-server kodiga ega bo'lib, buni
+    # superadmin/owner ATAYLAB yoqqan bo'lsa (webhook_proxy_enabled) — botga
+    # MAHALLIY (faqat shu konteyner ichida ko'rinadigan) port va hosterbot
+    # orqali proxy qilinadigan TASHQI manzilni beramiz. Ko'p bot Render uchun
+    # yozilganda "RENDER_EXTERNAL_URL bo'lsa webhook, bo'lmasa polling" mantig'iga
+    # ega bo'ladi — shu nomlar bilan berilgani uchun bunday botlar hech qanday
+    # kod o'zgarishisiz to'g'ridan-to'g'ri ishlab ketadi.
+    bot_row = db.get_bot(bot_id)
+    if bot_row and bot_row.get("webhook_proxy_enabled") and bot_row.get("webhook_proxy_token"):
+        local_port = db.local_port_for_bot(bot_id)
+        public_url = f"{WEBHOOK_BASE_URL.rstrip('/')}/PythonHosterRobot/{bot_row['webhook_proxy_token']}"
+        full_env["PORT"] = str(local_port)
+        full_env["RENDER_EXTERNAL_URL"] = public_url
+        full_env["WEBHOOK_HOST"] = public_url
+        full_env["WEBHOOK_URL"] = public_url
 
     start_cmd = normalize_interpreter(start_cmd)
     write_stage(log_file, "run_start", cmd=start_cmd, bot_id=bot_id)

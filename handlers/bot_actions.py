@@ -9,7 +9,7 @@ from aiogram.types import CallbackQuery, Message, FSInputFile
 from aiogram.fsm.context import FSMContext
 
 import database as db
-from config import is_admin, is_superadmin, STORAGE_GROUP_ID
+from config import is_admin, is_superadmin, STORAGE_GROUP_ID, WEBHOOK_BASE_URL
 from states import ConfirmDelete, FixCode, FixRequirements, FixEnv, RenameBot
 from keyboards import bot_manage_kb, admin_bot_view_kb, cancel_kb, main_menu_kb, edit_bot_menu_kb
 from services.deploy_manager import start_bot_process, stop_bot_process, read_log_tail, is_running, format_log_block, run_build_command, bot_link_html
@@ -493,7 +493,7 @@ async def cb_edit_bot_menu(callback: CallbackQuery):
         f"<i>Diqqat: o'zgarish saqlangach bot avtomatik qayta build qilinib, ishga tushiriladi "
         f"(agar hozir ishlab tursa, avval xavfsiz to'xtatiladi).</i>",
         parse_mode="HTML",
-        reply_markup=edit_bot_menu_kb(bot_id, has_env=has_env),
+        reply_markup=edit_bot_menu_kb(bot_id, has_env=has_env, webhook_proxy_enabled=bool(bot_row["webhook_proxy_enabled"])),
     )
     await callback.answer()
 
@@ -656,6 +656,52 @@ async def fix_code_wrong_content_type(message: Message):
 
 
 # ---------- Crash-fix oqimi: requirements.txt almashtirish ----------
+
+@router.callback_query(F.data.startswith("webhook_proxy_on:"))
+async def cb_webhook_proxy_on(callback: CallbackQuery, bot: Bot):
+    """
+    YANGI FEATURE: bot o'z ichida webhook-server kodiga ega bo'lsa (Flask/aiohttp
+    va h.k.), shu yoqilgach botga PORT + RENDER_EXTERNAL_URL/WEBHOOK_HOST/WEBHOOK_URL
+    avtomatik beriladi (start_bot_process ichida) — bot hosterbot'ning bitta umumiy
+    porti ORQALI (proxy) chinakam webhook rejimida ishlay oladi.
+    """
+    bot_id = int(callback.data.split(":")[1])
+    bot_row = db.get_bot(bot_id)
+    if not _authorized(callback, bot_row):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+
+    token = db.enable_webhook_proxy(bot_id)
+    public_url = f"{WEBHOOK_BASE_URL.rstrip('/')}/PythonHosterRobot/{token}"
+    await callback.message.answer(
+        f"🌐 Webhook proxy yoqildi.\n\n"
+        f"Bot manzili: <code>{public_url}</code>\n\n"
+        f"Bot kodi ichida <code>RENDER_EXTERNAL_URL</code> yoki <code>WEBHOOK_HOST</code> "
+        f"tekshirsa — avtomatik shu manzil beriladi. UptimeRobot yoki boshqa monitoring "
+        f"uchun shu manzilga (kerak bo'lsa oxiriga botning o'z yo'lini qo'shib, masalan "
+        f"<code>{public_url}/health</code>) ulanishingiz mumkin.\n\n"
+        f"O'zgarish kuchga kirishi uchun bot qayta ishga tushirilmoqda...",
+        parse_mode="HTML",
+    )
+    if bot_row["status"] == "running":
+        await _rebuild_and_start(bot_id, bot, callback.message)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("webhook_proxy_off:"))
+async def cb_webhook_proxy_off(callback: CallbackQuery, bot: Bot):
+    bot_id = int(callback.data.split(":")[1])
+    bot_row = db.get_bot(bot_id)
+    if not _authorized(callback, bot_row):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+
+    db.disable_webhook_proxy(bot_id)
+    await callback.message.answer("🌐 Webhook proxy o'chirildi. O'zgarish kuchga kirishi uchun bot qayta ishga tushirilmoqda...")
+    if bot_row["status"] == "running":
+        await _rebuild_and_start(bot_id, bot, callback.message)
+    await callback.answer()
+
 
 @router.callback_query(F.data.startswith("get_prev_data_backup:"))
 async def cb_get_prev_data_backup(callback: CallbackQuery, bot: Bot):

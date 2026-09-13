@@ -6,6 +6,7 @@ import re
 import shutil
 import time
 
+import aiohttp
 from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.types import ErrorEvent
@@ -638,10 +639,52 @@ async def github_webhook_handler(request: web.Request):
     return web.Response(status=200, text="ok")
 
 
+async def childweb_proxy_handler(request: web.Request):
+    """
+    YANGI FEATURE: '/PythonHosterRobot/<token>/<...>' manziliga kelgan HAR
+    QANDAY so'rovni (Telegram webhook, UptimeRobot ping, yoki botning o'zi
+    yozgan boshqa yo'l — /health, /ping va h.k.) shu tokenga tegishli botning
+    MAHALLIY portiga (faqat shu konteyner ichida ko'rinadigan) uzatadi va
+    javobni qaytaradi. Token taxmin qilib bo'lmaydigan tasodifiy qator bo'lgani
+    uchun, faqat bot egasi/superadmin ataylab ulashgan manzil orqaligina
+    ishlaydi — bot_id kabi ketma-ket raqam bo'lmagani uchun boshqalar taxmin
+    qilib topa olmaydi.
+    """
+    token = request.match_info["token"]
+    tail = request.match_info.get("tail", "")
+    bot_row = db.get_bot_by_proxy_token(token)
+    if not bot_row or bot_row["status"] != "running":
+        return web.Response(status=404, text="not found")
+
+    local_port = db.local_port_for_bot(bot_row["bot_id"])
+    target_url = f"http://127.0.0.1:{local_port}/{tail}"
+    if request.query_string:
+        target_url += f"?{request.query_string}"
+
+    body = await request.read()
+    fwd_headers = {k: v for k, v in request.headers.items() if k.lower() not in ("host", "content-length")}
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.request(
+                request.method, target_url, headers=fwd_headers, data=body,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                resp_body = await resp.read()
+                resp_headers = {
+                    k: v for k, v in resp.headers.items()
+                    if k.lower() not in ("content-length", "transfer-encoding", "content-encoding")
+                }
+                return web.Response(status=resp.status, body=resp_body, headers=resp_headers)
+    except Exception as e:
+        log.warning(f"childweb proxy xatoligi (bot #{bot_row['bot_id']}): {e}")
+        return web.Response(status=502, text="bad gateway")
+
+
 def create_app() -> web.Application:
     app = web.Application()
     app.router.add_get("/", health_check)
     app.router.add_post("/gh-webhook/{bot_id}/{secret}", github_webhook_handler)
+    app.router.add_route("*", "/PythonHosterRobot/{token}/{tail:.*}", childweb_proxy_handler)
 
     SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=WEBHOOK_PATH)
     setup_application(app, dp, bot=bot)

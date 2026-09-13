@@ -284,7 +284,7 @@ def bot_manage_kb(bot_row, has_env: bool = False, viewer_is_vip: bool = False) -
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def edit_bot_menu_kb(bot_id: int, has_env: bool = False) -> InlineKeyboardMarkup:
+def edit_bot_menu_kb(bot_id: int, has_env: bool = False, webhook_proxy_enabled: bool = False) -> InlineKeyboardMarkup:
     """'🛠 Botni tahrirlash' bosilganda ochiladigan pastki menyu — kod/requirements/env
     almashtirish tugmalari (fix_code/fix_reqs/fix_env handler'lari bilan bir xil,
     holat crashed/running/stopped bo'lishidan qat'i nazar ishlaydi)."""
@@ -296,6 +296,10 @@ def edit_bot_menu_kb(bot_id: int, has_env: bool = False) -> InlineKeyboardMarkup
     ]
     if has_env:
         rows.append([InlineKeyboardButton(text="🔑 ENV tahrirlash", callback_data=f"fix_env:{bot_id}")])
+    if webhook_proxy_enabled:
+        rows.append([InlineKeyboardButton(text="🌐 Webhook proxy: YOQILGAN (o'chirish)", callback_data=f"webhook_proxy_off:{bot_id}")])
+    else:
+        rows.append([InlineKeyboardButton(text="🌐 Webhook proxy'ni yoqish", callback_data=f"webhook_proxy_on:{bot_id}")])
     rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data=f"bot_manage:{bot_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

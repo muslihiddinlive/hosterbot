@@ -204,6 +204,18 @@ def init_db():
         except sqlite3.OperationalError:
             pass
         try:
+            # YANGI FEATURE: ba'zi child botlar o'z ichida webhook-server kodiga ega
+            # (masalan Flask/aiohttp bilan). Ularga hosterbot orqali HAQIQIY webhook
+            # imkoniyatini berish uchun — har bot uchun taxmin qilib bo'lmaydigan
+            # tasodifiy token va proxy yoqilgan/o'chirilganligi shu yerda saqlanadi.
+            conn.execute("ALTER TABLE bots ADD COLUMN webhook_proxy_token TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE bots ADD COLUMN webhook_proxy_enabled INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+        try:
             conn.execute("ALTER TABLE users ADD COLUMN is_banned INTEGER NOT NULL DEFAULT 0")
         except sqlite3.OperationalError:
             pass
@@ -427,6 +439,43 @@ def get_data_storage_group_id() -> int:
     agar hali sozlanmagan bo'lsa, ENG DASTLABKI (kod uchun ishlatiladigan)
     STORAGE_GROUP_ID'ga tushadi (eski xulq-atvor buzilmasligi uchun)."""
     return int(get_setting("data_storage_group_id", DEFAULT_STORAGE_GROUP_ID))
+
+
+def local_port_for_bot(bot_id: int) -> int:
+    """Har bot uchun DOIMIY, o'zaro to'qnashmaydigan mahalliy (faqat konteyner
+    ichida ko'rinadigan) port — webhook-server kodi bor botlar shunga bog'lanadi.
+    Tashqariga umuman ochiq emas — faqat hosterbot'ning o'zi (proxy orqali) unga murojaat qiladi."""
+    return 20000 + (bot_id % 10000)
+
+
+def enable_webhook_proxy(bot_id: int) -> str:
+    """Bot uchun webhook-proxy'ni yoqadi. Token hali yo'q bo'lsa, tasodifiy
+    (taxmin qilib bo'lmaydigan) token generatsiya qiladi. Qaytaradi: token."""
+    import secrets
+    with get_conn() as conn:
+        row = conn.execute("SELECT webhook_proxy_token FROM bots WHERE bot_id=?", (bot_id,)).fetchone()
+        token = row["webhook_proxy_token"] if row and row["webhook_proxy_token"] else secrets.token_urlsafe(32)
+        conn.execute(
+            "UPDATE bots SET webhook_proxy_token=?, webhook_proxy_enabled=1 WHERE bot_id=?",
+            (token, bot_id),
+        )
+        return token
+
+
+def disable_webhook_proxy(bot_id: int):
+    with get_conn() as conn:
+        conn.execute("UPDATE bots SET webhook_proxy_enabled=0 WHERE bot_id=?", (bot_id,))
+
+
+def get_bot_by_proxy_token(token: str):
+    """Taxmin qilib bo'lmaydigan token orqali botni topadi — token noto'g'ri
+    bo'lsa yoki proxy o'chirilgan bo'lsa None qaytaradi (boshqa birovning
+    botiga so'rov yo'naltirilib qolmasligi uchun)."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM bots WHERE webhook_proxy_token=? AND webhook_proxy_enabled=1", (token,),
+        ).fetchone()
+        return _decrypt_bot_row(row)
 
 
 def set_data_topic_id(bot_id: int, topic_id: int):
