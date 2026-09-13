@@ -683,8 +683,7 @@ async def cb_webhook_proxy_on(callback: CallbackQuery, bot: Bot):
         f"O'zgarish kuchga kirishi uchun bot qayta ishga tushirilmoqda...",
         parse_mode="HTML",
     )
-    if bot_row["status"] == "running":
-        await _rebuild_and_start(bot_id, bot, callback.message)
+    await _rebuild_and_start(bot_id, bot, callback.message)
     await callback.answer()
 
 
@@ -698,8 +697,7 @@ async def cb_webhook_proxy_off(callback: CallbackQuery, bot: Bot):
 
     db.disable_webhook_proxy(bot_id)
     await callback.message.answer("🌐 Webhook proxy o'chirildi. O'zgarish kuchga kirishi uchun bot qayta ishga tushirilmoqda...")
-    if bot_row["status"] == "running":
-        await _rebuild_and_start(bot_id, bot, callback.message)
+    await _rebuild_and_start(bot_id, bot, callback.message)
     await callback.answer()
 
 
