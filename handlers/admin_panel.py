@@ -234,6 +234,10 @@ async def set_data_storage_group(message: Message, state: FSMContext):
         await message.answer("Guruh ID butun son bo'lishi kerak (masalan -1001234567890).")
         return
     db.set_setting("data_storage_group_id", group_id)
+    # MUHIM FIX: bu sozlama darhol Telegram'ga backup qilinishi SHART — aks holda
+    # faqat mahalliy (ephemeral) diskda qolib, keyingi platforma restart'ida
+    # eski (sozlamadan oldingi) holatga qaytib ketardi.
+    await backup_database(message.bot)
     await message.answer(f"✅ Botlar diski endi shu guruhga tushadi: <code>{group_id}</code>", parse_mode="HTML")
 
 
