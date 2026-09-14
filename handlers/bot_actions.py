@@ -1076,8 +1076,12 @@ async def cb_ai_help(callback: CallbackQuery, bot: Bot):
         diagnosis = await ask_ai(system_prompt, user_prompt, telegram_id=owner_id, bot_id=bot_id)
     except AIError as e:
         log.warning(f"AI yordam xatosi (bot_id={bot_id}): {e}")
+        # DIQQAT: AIError matnida provider nomi va provayderdan qaytgan xom HTTP
+        # javobi (masalan xato sababi, ichki tafsilotlar) bo'lishi mumkin — bu
+        # ichki infratuzilma haqida ma'lumot, oddiy foydalanuvchiga ko'rsatilmasligi
+        # kerak (faqat log'da qoladi, adminlar u yerdan ko'radi).
         await thinking_msg.edit_text(
-            f"⚠️ AI yordam hozircha ishlamayapti: {html.escape(str(e))}\n\n"
+            f"⚠️ AI yordam hozircha ishlamayapti, keyinroq qayta urinib ko'ring.\n\n"
             f"Stars balansingizdan hech narsa yechilmadi."
         )
         return

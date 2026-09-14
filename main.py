@@ -521,6 +521,45 @@ async def data_backup_watchdog():
                     log.warning(f"Bot #{bot_id}: data backup watchdog xatoligi: {e}")
 
 
+ENCRYPTION_KEY_WARNING_TEXT = (
+    "⚠️ <b>Xavfsizlik ogohlantirishi:</b> <code>ENCRYPTION_KEY</code> ENV "
+    "o'zgaruvchisi o'rnatilmagan — bot tokenlari va foydalanuvchi ENV "
+    "qiymatlari (parollar, API kalitlar) hozir <b>shifrlanmagan</b> holda "
+    "saqlanmoqda va backup guruhiga ham ochiq holda yuborilmoqda.\n\n"
+    "Tuzatish uchun:\n"
+    "<code>python -c \"from cryptography.fernet import Fernet; "
+    "print(Fernet.generate_key().decode())\"</code>\n\n"
+    "buyrug'i bilan kalit generatsiya qilib, Render → Environment → "
+    "<code>ENCRYPTION_KEY</code> sifatida qo'shing."
+)
+
+
+async def warn_if_encryption_key_missing(bot: Bot, superadmin_ids) -> bool:
+    """ENCRYPTION_KEY o'rnatilmagan bo'lsa, bot tokenlari va foydalanuvchi ENV
+    qiymatlari (parollar, API kalitlar va h.k.) platform.db'da PLAIN TEXT
+    saqlanadi va shu holda STORAGE_GROUP_ID guruhiga backup sifatida ham
+    yuboriladi (services/crypto_utils.py'dagi izohga qarang). Bu SOKIN xato —
+    hech qanday runtime signal bo'lmasa, admin buni payqamasdan qolishi mumkin
+    edi. Shu sabab superadminlarga ham (faqat server logiga emas) darhol xabar
+    beramiz — log'ni odatda hech kim doimiy kuzatib turmaydi.
+
+    Qaytaradi: True — ogohlantirish yuborilgan bo'lsa (ENCRYPTION_KEY yo'q),
+    False — kalit o'rnatilgan bo'lsa."""
+    if os.environ.get("ENCRYPTION_KEY"):
+        return False
+
+    log.warning(
+        "ENCRYPTION_KEY o'rnatilmagan — bot tokenlari va ENV qiymatlari PLAIN TEXT "
+        "saqlanmoqda va backup guruhiga shifrlanmagan holda yuborilmoqda!"
+    )
+    for admin_id in superadmin_ids:
+        try:
+            await bot.send_message(admin_id, ENCRYPTION_KEY_WARNING_TEXT, parse_mode="HTML")
+        except Exception:
+            pass
+    return True
+
+
 async def on_startup(app: web.Application):
     await restore_database(bot)
     db.init_db()
@@ -531,6 +570,8 @@ async def on_startup(app: web.Application):
     asyncio.create_task(approval_expiry_watchdog())
     asyncio.create_task(star_balance_watchdog())
     asyncio.create_task(data_backup_watchdog())
+
+    await warn_if_encryption_key_missing(bot, SUPERADMIN_IDS)
 
     if not WEBHOOK_BASE_URL:
         log.warning(

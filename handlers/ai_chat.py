@@ -257,7 +257,9 @@ async def _process_ai_chat_text(answer_target: Message, state: FSMContext, bot: 
         ai_message = await ask_ai_with_tools(messages, telegram_id=owner_id, bot_id=bot_id)
     except AIError as e:
         log.warning(f"AI chat xatosi (bot_id={bot_id}): {e}")
-        await thinking_msg.edit_text(f"⚠️ AI hozircha ishlamayapti: {html.escape(str(e))}\n\nStars sarflanmadi.")
+        # DIQQAT: str(e) provider nomi/xom HTTP javobini o'z ichiga olishi mumkin —
+        # bu ichki infratuzilma tafsiloti, foydalanuvchiga ko'rsatilmasligi kerak.
+        await thinking_msg.edit_text("⚠️ AI hozircha ishlamayapti, keyinroq qayta urinib ko'ring.\n\nStars sarflanmadi.")
         return
 
     if price > 0:

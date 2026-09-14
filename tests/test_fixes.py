@@ -1498,3 +1498,45 @@ def test_github_deploy_option_kb_has_correct_callback():
     kb = github_deploy_option_kb()
     callbacks = {btn.callback_data for row in kb.inline_keyboard for btn in row}
     assert "deploy_from_github" in callbacks
+
+
+def test_on_startup_warns_superadmins_when_encryption_key_missing(monkeypatch):
+    # Xavfsizlik fix: ENCRYPTION_KEY o'rnatilmagan bo'lsa (bot tokenlari/ENV
+    # qiymatlari shifrlanmasdan saqlanadi), platforma ishga tushganda
+    # superadminlarga DARHOL Telegram xabari bilan ogohlantirish borishi kerak
+    # (faqat server logiga emas - buni odatda hech kim kuzatib turmaydi).
+    import asyncio
+    import main as main_mod
+
+    monkeypatch.delenv("ENCRYPTION_KEY", raising=False)
+
+    sent_messages = []
+
+    class FakeBot:
+        async def send_message(self, chat_id, text, **kwargs):
+            sent_messages.append((chat_id, text))
+
+    warned = asyncio.run(main_mod.warn_if_encryption_key_missing(FakeBot(), [777, 888]))
+
+    assert warned is True
+    assert len(sent_messages) == 2
+    assert {cid for cid, _ in sent_messages} == {777, 888}
+    assert all("ENCRYPTION_KEY" in text for _, text in sent_messages)
+
+
+def test_on_startup_skips_warning_when_encryption_key_set(monkeypatch):
+    import asyncio
+    import main as main_mod
+
+    monkeypatch.setenv("ENCRYPTION_KEY", "some-fernet-key")
+
+    sent_messages = []
+
+    class FakeBot:
+        async def send_message(self, chat_id, text, **kwargs):
+            sent_messages.append((chat_id, text))
+
+    warned = asyncio.run(main_mod.warn_if_encryption_key_missing(FakeBot(), [777]))
+
+    assert warned is False
+    assert sent_messages == []
