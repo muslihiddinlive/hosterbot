@@ -9,6 +9,7 @@ platform.db faylining o'zi ham STORAGE_GROUP_ID guruhiga backup sifatida yuboril
 (services/file_utils.py -> backup_database() funksiyasi shuni qiladi).
 Production'da buni tashqi Postgres (Supabase/Neon free tier) bilan almashtirish tavsiya etiladi.
 """
+import secrets
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -627,7 +628,10 @@ def get_bot_by_webhook(bot_id: int, webhook_secret: str):
     bot_row = get_bot(bot_id)
     if bot_row is None or not bot_row.get("webhook_secret"):
         return None
-    if bot_row["webhook_secret"] != webhook_secret:
+    # constant-time solishtirish — timing attack orqali secret'ni belgi-belgilab
+    # tахmin qilishning oldini olish uchun (oddiy != operatori birinchi mos
+    # kelmagan belgida qisqa tuxtaydi va bu vaqt farqi orqali sizib chiqishi mumkin edi)
+    if not secrets.compare_digest(bot_row["webhook_secret"], webhook_secret):
         return None
     return bot_row
 

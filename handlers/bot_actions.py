@@ -903,6 +903,14 @@ async def _rebuild_and_start(bot_id: int, bot: Bot, message: Message):
 
     if bot_row["status"] == "running" and is_running(bot_id):
         await asyncio.to_thread(stop_bot_process, bot_id)
+        # MUHIM FIX (race condition): status'ni DARHOL "stopped"ga o'tkazamiz.
+        # Sabab: build_cmd ijrosi (pastda) 5 daqiqagacha cho'zilishi mumkin —
+        # shu vaqt ichida DB'da status hali "running" qolib ketsa, crash_watchdog
+        # (har 60 soniyada tekshiradi) process o'chirilganini ko'rib, buni
+        # HAQIQIY qulash deb noto'g'ri belgilab, egasi va barcha adminlarga
+        # soxta "kutilmaganda to'xtab qoldi" xabarini yuborib yuborishi mumkin
+        # edi — garchi bu shunchaki oddiy rebuild jarayonining bir qismi bo'lsa ham.
+        db.set_bot_status(bot_id, "stopped", None)
 
     allowed, used_mb, budget_mb = can_start_new_bot()
     if not allowed:

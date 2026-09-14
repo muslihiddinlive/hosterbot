@@ -276,17 +276,30 @@ def test_bot_manage_kb_shows_edit_menu_regardless_of_status():
 
 
 def test_edit_bot_menu_kb_has_code_and_reqs_always_env_conditionally():
+    # fix_env tugmasi has_env qiymatidan qat'i nazar HAR DOIM ko'rsatiladi
+    # (crash_notify_kb bilan bir xil xulq-atvor) — faqat label matni farqlanadi:
+    # has_env=False -> "ENV qo'shish", has_env=True -> "ENV tahrirlash/qo'shish".
     from keyboards import edit_bot_menu_kb
     kb_without_env = edit_bot_menu_kb(9, has_env=False)
     callbacks_without = {btn.callback_data for row in kb_without_env.inline_keyboard for btn in row}
     assert "fix_code:9" in callbacks_without
     assert "fix_reqs:9" in callbacks_without
-    assert "fix_env:9" not in callbacks_without
+    assert "fix_env:9" in callbacks_without
+    label_without = next(
+        btn.text for row in kb_without_env.inline_keyboard for btn in row
+        if btn.callback_data == "fix_env:9"
+    )
+    assert "qo'shish" in label_without and "tahrirlash" not in label_without
 
     kb_with_env = edit_bot_menu_kb(9, has_env=True)
     callbacks_with = {btn.callback_data for row in kb_with_env.inline_keyboard for btn in row}
     assert "fix_env:9" in callbacks_with
     assert "bot_manage:9" in callbacks_with  # "orqaga" tugmasi bot_manage'ga qaytishi kerak
+    label_with = next(
+        btn.text for row in kb_with_env.inline_keyboard for btn in row
+        if btn.callback_data == "fix_env:9"
+    )
+    assert "tahrirlash" in label_with
 
 
 def test_crash_notify_kb_matches_manage_kb_buttons():
@@ -553,6 +566,55 @@ def test_rebuild_stops_running_bot_before_rebuilding(tmp_path, monkeypatch):
 
     asyncio.run(bot_actions_mod._rebuild_and_start(bot_id, bot=None, message=FakeMessage()))
     assert stop_calls == [bot_id], "running bot avval to'xtatilishi kerak edi"
+
+
+def test_rebuild_marks_status_stopped_immediately_after_stopping_old_process(tmp_path, monkeypatch):
+    # Race condition fix: eski processni to'xtatgandan keyin, build tugagunicha
+    # (bu 5 daqiqagacha cho'zilishi mumkin), DB status DARHOL "stopped"ga
+    # o'tishi kerak. Aks holda bu oraliqda crash_watchdog kelib, "running" deb
+    # yozilgan-u lekin process o'chirilgan botni HAQIQIY qulash deb xato
+    # belgilab, egasi va adminlarga soxta xabar yuborib yuborishi mumkin edi.
+    import asyncio
+    import handlers.bot_actions as bot_actions_mod
+
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    code_dir = tmp_path / "bot_3"
+    code_dir.mkdir()
+    bot_id = db_mod.create_bot(
+        owner_id=1, bot_username="testbot", bot_token=None, code_path=str(code_dir),
+        storage_file_id=None, is_zip=False, language="python",
+        build_cmd="", start_cmd="python bot.py",
+    )
+    db_mod.set_bot_status(bot_id, "running", 12345)
+
+    status_snapshot_during_build = {}
+
+    def fake_can_start_new_bot():
+        # RAM tekshiruvi paytida (build boshlanishidan oldin) statusni ushlab olamiz —
+        # bu aynan stop_bot_process bilan navbatdagi qayta start orasidagi oyna.
+        row = db_mod.get_bot(bot_id)
+        status_snapshot_during_build["status"] = row["status"]
+        return (False, 999, 1000)  # RAM to'la — build'gacha yetmasin, shu bilan snapshotni ushlab qolamiz
+
+    monkeypatch.setattr(bot_actions_mod, "db", db_mod)
+    monkeypatch.setattr(bot_actions_mod, "stop_bot_process", lambda bid: None)
+    monkeypatch.setattr(bot_actions_mod, "is_running", lambda bid: True)
+    monkeypatch.setattr(bot_actions_mod, "can_start_new_bot", fake_can_start_new_bot)
+
+    class FakeUser:
+        id = 1
+
+    class FakeMessage:
+        from_user = FakeUser()
+
+        async def answer(self, *args, **kwargs):
+            pass
+
+    asyncio.run(bot_actions_mod._rebuild_and_start(bot_id, bot=None, message=FakeMessage()))
+    assert status_snapshot_during_build["status"] == "stopped", (
+        "eski process to'xtatilgandan keyin, build/start davom etayotganda ham "
+        "DB status 'stopped' bo'lishi kerak — aks holda watchdog soxta crash signali beradi"
+    )
 
 
 def test_rebuild_skips_stop_when_bot_not_running(tmp_path, monkeypatch):

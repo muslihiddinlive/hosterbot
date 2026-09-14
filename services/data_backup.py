@@ -33,6 +33,7 @@ from aiogram import Bot
 from aiogram.types import FSInputFile
 
 import database as db
+from services.file_utils import extract_zip
 
 log = logging.getLogger("hosterbot.data_backup")
 
@@ -155,9 +156,10 @@ async def restore_bot_data(bot: Bot, file_id: str, workdir: str) -> bool:
     zip_path = f"/tmp/hosterbot_data_restore_{os.path.basename(workdir)}.zip"
     try:
         await bot.download(file_id, destination=zip_path)
-        os.makedirs(workdir, exist_ok=True)
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(workdir)
+        # extract_zip (file_utils) zip-slip himoyasi bilan chiqaradi — bu backup
+        # odatda platformaning o'zi yaratgan bo'lsa-da, chuqurlikni buzuvchi
+        # mudofaa (defense-in-depth) sifatida shu yo'l bilan qat'iy tekshiramiz.
+        extract_zip(zip_path, workdir)
         return True
     except Exception as e:
         log.warning(f"Data backup'ni tiklashda xato: {e}")

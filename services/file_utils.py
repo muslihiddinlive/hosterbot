@@ -49,11 +49,16 @@ def detect_language_from_zip(zip_path: str) -> str:
 
 def extract_zip(zip_path: str, dest_dir: str):
     os.makedirs(dest_dir, exist_ok=True)
+    # DIQQAT: dest_dir'ni ham abspath qilamiz — agar chaqiruvchi relative yo'l
+    # bersa, member_path (abspath'siz dest_dir bilan normpath qilingan) va
+    # os.path.abspath(dest_dir) solishtirilganda hech qachon mos kelmasdi
+    # (har doim "xavfli" deb topilib, legitim zip'lar ham rad etilardi).
+    dest_dir_abs = os.path.abspath(dest_dir)
     with zipfile.ZipFile(zip_path) as z:
         # Zip-slip himoyasi: har bir yo'lni tekshirib chiqamiz
         for member in z.namelist():
-            member_path = os.path.normpath(os.path.join(dest_dir, member))
-            if not member_path.startswith(os.path.abspath(dest_dir)):
+            member_path = os.path.normpath(os.path.join(dest_dir_abs, member))
+            if not (member_path == dest_dir_abs or member_path.startswith(dest_dir_abs + os.sep)):
                 raise ValueError("Xavfli zip fayl: yo'l chegaradan chiqib ketmoqda")
         z.extractall(dest_dir)
 
