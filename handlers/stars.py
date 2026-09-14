@@ -22,7 +22,7 @@ from aiogram.fsm.context import FSMContext
 
 import database as db
 from config import is_admin
-from states import StarsTopUp
+from states import StarsTopUp, AIChat
 from keyboards import hisob_kb, cancel_kb, main_menu_kb
 from services.deploy_manager import start_bot_process, is_running
 from services.resource_monitor import can_start_new_bot, format_ram_limit_message
@@ -115,10 +115,11 @@ async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery):
 
 
 @router.message(F.successful_payment)
-async def process_successful_payment(message: Message):
+async def process_successful_payment(message: Message, state: FSMContext):
     payment = message.successful_payment
     amount = payment.total_amount  # XTR uchun bu to'g'ridan-to'g'ri stars soni
     user_id = message.from_user.id
+    payload = payment.invoice_payload or ""
 
     db.add_lifetime_topup(user_id, amount)  # umr bo'yi to'lov hisoblagichi — hech qachon kamaymaydi
     user = db.get_user(user_id)
@@ -163,6 +164,25 @@ async def process_successful_payment(message: Message):
             parse_mode="HTML",
         )
         return
+
+    # YANGI FEATURE: agar bu to'lov aynan "AI suhbatda balans yetmagani uchun"
+    # chiqarilgan invoice bo'lsa (_process_ai_chat_text, ai_chat.py) — endi
+    # foydalanuvchi qayta savol yozishiga hojat qoldirmasdan, saqlangan
+    # savolni AVTOMATIK qayta yuboramiz.
+    if payload.startswith("ai_chat_topup_"):
+        current_state = await state.get_state()
+        data = await state.get_data()
+        pending_text = data.get("ai_pending_text")
+        if current_state == AIChat.chatting.state and pending_text:
+            await message.answer(
+                f"✅ To'lov qabul qilindi! Balansga <b>{amount} ⭐️</b> qo'shildi "
+                f"(yangi balans: {new_balance} ⭐️). Savolingiz davom ettirilmoqda...",
+                parse_mode="HTML",
+            )
+            await state.update_data(ai_pending_text=None)
+            from handlers.ai_chat import _process_ai_chat_text
+            await _process_ai_chat_text(message, state, message.bot, user_id, pending_text)
+            return
 
     await message.answer(
         f"✅ To'lov qabul qilindi! Balansga <b>{amount} ⭐️</b> qo'shildi.\n"

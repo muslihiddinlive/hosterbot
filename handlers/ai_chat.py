@@ -23,7 +23,7 @@ import os
 import re
 
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, FSInputFile
+from aiogram.types import Message, CallbackQuery, FSInputFile, LabeledPrice
 from aiogram.fsm.context import FSMContext
 from aiogram.filters import StateFilter
 
@@ -95,6 +95,7 @@ async def fallback_free_text(message: Message, state: FSMContext):
     # yerda "yutilib" ketardi — javob kelmasdi. Endi StateFilter(None) orqali
     # deklarativ tekshiramiz: state band bo'lsa, aiogram avtomatik ravishda
     # navbatdagi mos handler'ni sinab ko'radi.
+    await state.update_data(ai_pending_text=message.text)
     await message.answer(
         "🤖 Bu buyruqni tushunmadim. AI'ga yozmoqchimisiz?",
         reply_markup=ai_chat_confirm_kb(),
@@ -166,22 +167,37 @@ async def _start_ai_chat(callback: CallbackQuery, state: FSMContext, bot_id: int
     await callback.message.answer("Chiqish uchun pastdagi tugmani bosing:", reply_markup=cancel_kb())
     await callback.answer()
 
+    # YANGI FIX: agar foydalanuvchi "Ha" bosishdan OLDIN allaqachon savolini
+    # yozgan bo'lsa (fallback_free_text orqali saqlangan), uni endi qayta
+    # yozdirmasdan AVTOMATIK yuboramiz — ilgari bu matn yo'qolib, foydalanuvchi
+    # suhbat boshlangach savolni QAYTA yozishga majbur bo'lardi.
+    data = await state.get_data()
+    pending_text = data.get("ai_pending_text")
+    if pending_text:
+        await state.update_data(ai_pending_text=None)
+        await _process_ai_chat_text(callback.message, state, callback.bot, callback.from_user.id, pending_text)
+
 
 # ---------- Suhbat rejimidagi xabarlar ----------
 
-@router.message(AIChat.chatting)
-async def handle_ai_chat_message(message: Message, state: FSMContext, bot: Bot):
-    if (message.text or "") in _MENU_BUTTON_TEXTS:
-        # Foydalanuvchi asosiy menyu tugmasini bosdi — suhbatdan chiqmoqchi.
-        # DIQQAT: aiogram 3.x'da bitta update faqat BITTA handler'ga yetadi
-        # (handler zanjiri/skip mexanizmi yo'q), shu sabab shu yerning o'zida
-        # tugmani "qayta ishlov berib" ulanган menyuga o'tkaza olmaymiz — shu
-        # sabab state'ni tozalab, foydalanuvchidan tugmani qayta bosishini
-        # so'raymiz (Stars sarflanmaydi, faqat bitta qo'shimcha bosish kerak).
+async def _process_ai_chat_text(answer_target: Message, state: FSMContext, bot: Bot, user_id: int, text: str):
+    """
+    AI suhbat xabarini qayta ishlaydi. answer_target — javoblar shu chat'ga
+    yuboriladigan istalgan Message obyekti (foydalanuvchining o'zi yozgan
+    xabari, YOKI botning oldingi xabari — ikkalasida ham .answer() bir xil
+    ishlaydi). user_id alohida beriladi, chunki answer_target ba'zan botning
+    o'z xabari bo'lishi mumkin (uning from_user'i botning o'zi bo'lardi).
+
+    YANGI: bu funksiya endi ikki joydan chaqiriladi — (1) oddiy xabar kelganda
+    (handle_ai_chat_message), (2) "AI'ga yozmoqchimisiz? Ha" bosilgandan keyin,
+    foydalanuvchi ALLAQACHON yozgan matn bilan (_start_ai_chat) — ilgari bu
+    holatda matn yo'qolib, foydalanuvchi qayta yozishga majbur bo'lardi.
+    """
+    if (text or "") in _MENU_BUTTON_TEXTS:
         await state.clear()
-        await message.answer(
+        await answer_target.answer(
             "✅ AI suhbatidan chiqdingiz. Davom etish uchun tugmani yana bir marta bosing.",
-            reply_markup=main_menu_kb(is_admin=is_admin(message.from_user.id)),
+            reply_markup=main_menu_kb(is_admin=is_admin(user_id)),
         )
         return
 
@@ -190,22 +206,38 @@ async def handle_ai_chat_message(message: Message, state: FSMContext, bot: Bot):
     bot_row = db.get_bot(bot_id) if bot_id else None
     if bot_row is None:
         await state.clear()
-        await message.answer("Bot topilmadi, suhbat yakunlandi.", reply_markup=main_menu_kb(is_admin=is_admin(message.from_user.id)))
+        await answer_target.answer("Bot topilmadi, suhbat yakunlandi.", reply_markup=main_menu_kb(is_admin=is_admin(user_id)))
         return
 
-    price = 0 if is_admin(message.from_user.id) else db.get_ai_chat_price_stars()
+    price = 0 if is_admin(user_id) else db.get_ai_chat_price_stars()
     owner_id = bot_row["owner_id"]
     balance = db.get_user_balance(owner_id)
     if balance < price:
-        await message.answer(
-            f"⭐️ Balansingiz yetarli emas ({balance}/{price}). \"💳 Hisob\" orqali to'ldiring.\n"
-            f"Suhbat yakunlandi.",
+        # YANGI: ilgari bu yerda suhbat butunlay yakunlanardi ("balansingiz
+        # yetarli emas") va foydalanuvchi qo'lda "💳 Hisob"ga o'tib, to'lab,
+        # keyin QAYTA savol yozishi kerak edi. Endi shortfall miqdoriga
+        # to'g'ridan-to'g'ri shu yerning o'zida Stars invoice chiqariladi —
+        # to'lov muvaffaqiyatli bo'lsa, savol AVTOMATIK qayta yuboriladi
+        # (process_successful_payment orqali, stars.py'da).
+        shortfall = price - balance
+        await state.update_data(ai_pending_text=text)  # suhbat holati saqlanadi, YAKUNLANMAYDI
+        await answer_target.answer(
+            f"⭐️ Balansingiz yetarli emas ({balance}/{price}). Kerakli <b>{shortfall}⭐️</b>ni "
+            f"to'lang — to'lov o'tishi bilan savolingiz avtomatik yuboriladi:",
+            parse_mode="HTML",
         )
-        await state.clear()
+        await answer_target.answer_invoice(
+            title=f"{shortfall} ⭐️ Stars — AI suhbat",
+            description=f"AI suhbatni davom ettirish uchun {shortfall} Stars.",
+            payload=f"ai_chat_topup_{owner_id}_{shortfall}",
+            provider_token="",
+            currency="XTR",
+            prices=[LabeledPrice(label=f"{shortfall} Stars", amount=shortfall)],
+        )
         return
 
     bot_label = bot_row["bot_username"] or bot_row["display_name"] or f"Bot #{bot_id}"
-    thinking_msg = await message.answer("🤖 O'ylanyapman...")
+    thinking_msg = await answer_target.answer("🤖 O'ylanyapman...")
 
     history = data.get("ai_chat_history", [])
     code_snippet, requirements_text = _gather_bot_context(bot_row)
@@ -218,7 +250,7 @@ async def handle_ai_chat_message(message: Message, state: FSMContext, bot: Bot):
     messages = (
         [{"role": "system", "content": system_prompt}]
         + history[-MAX_HISTORY_MESSAGES:]
-        + [{"role": "user", "content": f"{context_note}\n\nSavol: {message.text}"}]
+        + [{"role": "user", "content": f"{context_note}\n\nSavol: {text}"}]
     )
 
     try:
@@ -259,7 +291,7 @@ async def handle_ai_chat_message(message: Message, state: FSMContext, bot: Bot):
                 parse_mode="HTML",
             )
         else:
-            edit_price = 0 if is_admin(message.from_user.id) else db.get_ai_help_price_stars()
+            edit_price = 0 if is_admin(user_id) else db.get_ai_help_price_stars()
             await state.update_data(
                 ai_chat_pending_edit={"target": target, "new_content": new_content, "bot_id": bot_id},
             )
@@ -271,7 +303,7 @@ async def handle_ai_chat_message(message: Message, state: FSMContext, bot: Bot):
                 parse_mode="HTML",
                 reply_markup=ai_chat_edit_confirm_kb(edit_price),
             )
-        history.append({"role": "user", "content": message.text})
+        history.append({"role": "user", "content": text})
         history.append({"role": "assistant", "content": ai_message.get("content") or f"[Tahrirlash taklif qilindi: {target}]"})
     else:
         reply_text = (ai_message.get("content") or "").strip() or "Javob bo'sh keldi."
@@ -279,10 +311,15 @@ async def handle_ai_chat_message(message: Message, state: FSMContext, bot: Bot):
             f"🤖 {html.escape(reply_text)}{price_note}",
             parse_mode="HTML",
         )
-        history.append({"role": "user", "content": message.text})
+        history.append({"role": "user", "content": text})
         history.append({"role": "assistant", "content": reply_text})
 
-    await state.update_data(ai_chat_history=history[-MAX_HISTORY_MESSAGES:])
+    await state.update_data(ai_chat_history=history[-MAX_HISTORY_MESSAGES:], ai_pending_text=None)
+
+
+@router.message(AIChat.chatting)
+async def handle_ai_chat_message(message: Message, state: FSMContext, bot: Bot):
+    await _process_ai_chat_text(message, state, bot, message.from_user.id, message.text or "")
 
 
 @router.callback_query(F.data.startswith("ai_chat_apply_edit:"))

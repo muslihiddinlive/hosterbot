@@ -216,6 +216,13 @@ async def restore_running_bots(bot: Bot):
                         extract_zip(tmp_path, workdir)
                         os.remove(tmp_path)
                         workdir = resolve_project_root(workdir)
+                        # MUHIM FIX: bu tuzatish ilgari faqat mahalliy o'zgaruvchida
+                        # qolardi, DB'dagi code_path esa eskirgan (tashqi/wrapper)
+                        # yo'lda qolib ketardi — shu sabab AI tashxis, "Bot haqida"
+                        # kabi DB'dan to'g'ridan-to'g'ri o'qiydigan funksiyalar
+                        # noto'g'ri (bo'sh) papkani ko'rardi, garchi bot o'zi to'g'ri
+                        # joydan ishlab tursa ham.
+                        db.set_bot_code_path(bot_id, workdir)
                     else:
                         match = re.search(r'([^\s"\']+\.py)', start_cmd)
                         py_name = os.path.basename(match.group(1)) if match else "main.py"
@@ -235,7 +242,10 @@ async def restore_running_bots(bot: Bot):
             # loyiha ichki wrapper papkada bo'lishi mumkin. workdir'ni shunga moslab
             # resolve qilmasak, keyingi build/start/log yo'llari noto'g'ri
             # (tashqi, bo'sh) papkaga ishora qilib qoladi.
-            workdir = resolve_project_root(workdir)
+            resolved = resolve_project_root(workdir)
+            if resolved != workdir:
+                workdir = resolved
+                db.set_bot_code_path(bot_id, workdir)
 
         # MUHIM FIX: agar bu bot uchun alohida backup qilingan requirements.txt
         # bo'lsa (dastlabki deploy'da .py+requirements.txt sifatida yuklangan,
