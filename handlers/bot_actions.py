@@ -13,7 +13,7 @@ import database as db
 from config import is_admin, is_superadmin, STORAGE_GROUP_ID, WEBHOOK_BASE_URL
 from states import ConfirmDelete, FixCode, FixRequirements, FixEnv, RenameBot
 from keyboards import bot_manage_kb, admin_bot_view_kb, cancel_kb, main_menu_kb, edit_bot_menu_kb
-from services.deploy_manager import start_bot_process, stop_bot_process, read_log_tail, is_running, format_log_block, run_build_command, bot_link_html
+from services.deploy_manager import start_bot_process, stop_bot_process, read_log_tail, is_running, format_log_block, run_build_command, bot_link_html, static_scan
 from services.resource_monitor import can_start_new_bot, bot_ram_mb, format_ram_limit_message
 from services.file_utils import (
     cleanup_bot_files, write_env_file, extract_zip, resolve_project_root,
@@ -634,6 +634,21 @@ async def receive_fix_code_file(message: Message, state: FSMContext, bot: Bot):
 
     await state.clear()
 
+    # XAVFSIZLIK FIX: ilgari bu yerda static_scan umuman chaqirilmagan edi —
+    # add_bot.py'da ilk deploy paytida shubhali kod pattern'lari (masalan
+    # os.system, eval, subprocess bilan qobiq buyrug'i) haqida ogohlantirish
+    # berilardi, lekin kodni QAYTA yuklashda (shu handler) bunday tekshiruv
+    # yo'q edi — izchillik yo'q edi. Bloklamaymiz (add_bot.py'dagi bilan bir
+    # xil mantiq — admin/egasi o'zi qaror qiladi), faqat signal beramiz.
+    try:
+        with open(target_path, "r", encoding="utf-8", errors="ignore") as f:
+            warnings = static_scan(f.read())
+    except Exception:
+        warnings = []
+    warn_text = (
+        "\n\n⚠️ Kodingizda diqqat talab qiladigan qatorlar aniqlandi." if warnings else ""
+    )
+
     # MUHIM FIX: yangi kodni ham asosiy deploy fayli bilan bir xil tamoyilda
     # STORAGE_GROUP_ID'ga backup qilamiz va DB'dagi storage_file_id'ni
     # yangilaymiz — aks holda platforma qayta ishga tushganda bot ESKI (ilk
@@ -649,7 +664,7 @@ async def receive_fix_code_file(message: Message, state: FSMContext, bot: Bot):
 
     # Yangi kod bilan bevosita "qayta build + ishga tushirish" ni ishga tushiramiz —
     # foydalanuvchi yana alohida tugma bosishiga hojat qoldirmaslik uchun.
-    await message.answer("✅ Yangi kod qabul qilindi. Qayta build va ishga tushirilmoqda...")
+    await message.answer(f"✅ Yangi kod qabul qilindi.{warn_text} Qayta build va ishga tushirilmoqda...")
     await _rebuild_and_start(bot_id, message.bot, message)
 
 

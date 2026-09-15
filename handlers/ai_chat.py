@@ -32,6 +32,7 @@ from config import is_admin, STORAGE_GROUP_ID
 from states import AIChat
 from keyboards import ai_chat_confirm_kb, ai_chat_pick_bot_kb, ai_chat_edit_confirm_kb, main_menu_kb, cancel_kb
 from services.ai_client import ask_ai_with_tools, build_free_chat_system_prompt, AIError
+from services.deploy_manager import static_scan
 from handlers.bot_actions import _rebuild_and_start
 
 router = Router()
@@ -367,6 +368,21 @@ async def cb_ai_chat_apply_edit(callback: CallbackQuery, state: FSMContext, bot:
         await callback.message.answer(f"⚠️ Faylni yozishda xato: {e}")
         return
 
+    # XAVFSIZLIK FIX: AI taklif qilgan kod ilgari static_scan'siz to'g'ridan-to'g'ri
+    # yozilib, avtomatik ishga tushirilardi. AI provayder — ishonchsiz manba
+    # (masalan agar boshqa foydalanuvchi suhbat orqali AI'ni zararli kod taklif
+    # qilishga undasa/manipulyatsiya qilsa), shu sabab add_bot.py'dagi bilan bir
+    # xil tekshiruvni shu yerga ham qo'shamiz. Bloklamaymiz (dizayn bo'yicha —
+    # egasi allaqachon "Ha, tuzat" bosib rozilik bergan), faqat ogohlantiramiz.
+    warn_text = ""
+    if target == "code":
+        try:
+            warnings = static_scan(new_content)
+        except Exception:
+            warnings = []
+        if warnings:
+            warn_text = "\n\n⚠️ Yangi kodda diqqat talab qiladigan qatorlar aniqlandi."
+
     # MUHIM FIX: yangi fayl (kod yoki requirements.txt) ilgari FAQAT workdir'ga
     # yozilib, hech qachon STORAGE_GROUP'ga backup qilinmasdi — platforma qayta
     # ishga tushganda AI tahrirlagan o'zgarish yo'qolib, eski fayl tiklanardi
@@ -395,6 +411,6 @@ async def cb_ai_chat_apply_edit(callback: CallbackQuery, state: FSMContext, bot:
 
     await state.update_data(ai_chat_pending_edit=None)
     await callback.message.edit_text(
-        f"✅ O'zgarish qo'llandi {applied_note}. Qayta build va ishga tushirilmoqda..."
+        f"✅ O'zgarish qo'llandi {applied_note}.{warn_text} Qayta build va ishga tushirilmoqda..."
     )
     await _rebuild_and_start(bot_id, bot, callback.message)

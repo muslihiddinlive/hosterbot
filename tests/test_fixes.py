@@ -1540,3 +1540,37 @@ def test_on_startup_skips_warning_when_encryption_key_set(monkeypatch):
 
     assert warned is False
     assert sent_messages == []
+
+
+def test_static_scan_flags_suspicious_code_that_would_be_reuploaded_via_fix_code():
+    # Xavfsizlik fix: fix_code (kodni qayta yuklash) va AI-edit oqimlari ilgari
+    # static_scan'ni umuman chaqirmasdi - faqat add_bot.py (ilk deploy) chaqirar
+    # edi. Bu test static_scan'ning o'zi "qayta yuklanadigan" xavfli pattern'ni
+    # (masalan qobiq orqali fayl o'chirish) to'g'ri aniqlashini tasdiqlaydi -
+    # handlers/bot_actions.py va handlers/ai_chat.py endi shu funksiyani
+    # chaqiradi (fayl yozilgandan keyin, rebuild'dan oldin).
+    from services.deploy_manager import static_scan
+
+    dangerous_code = "import os\nos.system('rm -rf /')\n"
+    warnings = static_scan(dangerous_code)
+    assert warnings, "os.system(...) kabi shubhali chaqiruv aniqlanishi kerak edi"
+
+    clean_code = "import telebot\nbot = telebot.TeleBot('x')\nbot.polling()\n"
+    assert static_scan(clean_code) == []
+
+
+def test_ai_chat_apply_edit_imports_static_scan_for_ai_suggested_code():
+    # AI taklif qilgan kod ishonchsiz manba hisoblanadi (masalan agar suhbat
+    # orqali AI zararli kod yozishga undalsa) - shu sabab cb_ai_chat_apply_edit
+    # endi fayl yozilgandan keyin static_scan'ni chaqiradi. Modul darajasida
+    # to'g'ri import qilinganini (funksiya chaqirilganda NameError bermasligini)
+    # tekshiramiz.
+    import handlers.ai_chat as ai_chat_mod
+    assert ai_chat_mod.static_scan is not None
+    assert ai_chat_mod.static_scan("os.system('evil')") != []
+
+
+def test_bot_actions_apply_edit_imports_static_scan():
+    import handlers.bot_actions as bot_actions_mod
+    assert bot_actions_mod.static_scan is not None
+    assert bot_actions_mod.static_scan("os.system('evil')") != []
