@@ -18,7 +18,7 @@ from config import BOT_TOKEN, WEBHOOK_BASE_URL, WEBHOOK_PATH, PORT, ADMIN_IDS, S
 import database as db
 from services.backup import restore_database, backup_database
 from services.data_backup import backup_bot_data, restore_bot_data, _workdir_signature
-from services.deploy_manager import is_running, read_log_tail, run_build_command, start_bot_process, stop_bot_process, format_log_block
+from services.deploy_manager import is_running, read_log_tail, run_build_command, start_bot_process, stop_bot_process, format_log_block, _truncate_log_if_too_large
 from services.file_utils import (
     bot_workdir, extract_zip, resolve_project_root,
     normalize_requirements_filename, fix_all_py_encodings,
@@ -263,6 +263,11 @@ async def restore_running_bots(bot: Bot):
         envs = {e["key"]: e["value"] for e in db.list_envs(bot_id)}
         try:
             log_path = os.path.join(workdir, "run.log")
+            # DISK TO'LIB QOLISH FIX: platforma har qayta ishga tushganda (deploy,
+            # Render restart va h.k.) barcha botlar shu yerdan qayta ishga tushadi —
+            # bu run.log'ning eng ko'p o'sadigan joylaridan biri edi, chunki har
+            # safar eski logning oxiriga qo'shilardi.
+            _truncate_log_if_too_large(log_path)
             with open(log_path, "a", encoding="utf-8") as log_file:
                 build_ok = run_build_command(workdir, bot_row["build_cmd"] or "", log_file)
             if not build_ok:

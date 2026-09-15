@@ -151,9 +151,43 @@ def run_build_command(workdir: str, build_cmd: str, log_file) -> bool:
     return result.returncode == 0
 
 
+# DISK TO'LIB QOLISH FIX: run.log har doim "a" (append) rejimida ochilardi va
+# HECH QACHON kesilmas/rotatsiya qilinmas edi. Har bir restart, rebuild, yoki
+# crash-restart eski logning OXIRIGA qo'shib borardi — vaqt o'tishi bilan
+# (ayniqsa ko'p log chiqaradigan yoki crash-loop'ga tushib qolgan botlarda)
+# bitta run.log ONLAB-YUZLAB MB'ga yetib, disk to'lib qolishiga (Render'da
+# "xotira to'ldi" degan xabarga) olib kelishi mumkin edi. Endi har safar log
+# fayl QAYTA OCHILISHIDAN oldin hajmi tekshiriladi — chegaradan katta bo'lsa,
+# faqat oxirgi qismi qoldirilib qisqartiriladi (to'liq tarix emas, lekin
+# oxirgi loglar — aynan shu narsa muammoni diagnostika qilish uchun kerak).
+RUN_LOG_MAX_BYTES = 2 * 1024 * 1024  # 2 MB — bitta bot uchun yetarlicha katta, lekin cheksiz o'smaydi
+RUN_LOG_KEEP_TAIL_BYTES = 512 * 1024  # kesilganda oxirgi 512 KB saqlanadi
+
+
+def _truncate_log_if_too_large(log_path: str, max_bytes: int = RUN_LOG_MAX_BYTES,
+                                keep_tail_bytes: int = RUN_LOG_KEEP_TAIL_BYTES):
+    try:
+        if not os.path.exists(log_path):
+            return
+        size = os.path.getsize(log_path)
+        if size <= max_bytes:
+            return
+        with open(log_path, "rb") as f:
+            f.seek(-keep_tail_bytes, os.SEEK_END)
+            tail = f.read()
+        with open(log_path, "wb") as f:
+            f.write(f"--- [avvalgi loglar hajm chegarasi ({max_bytes} bayt) tufayli kesildi] ---\n".encode("utf-8"))
+            f.write(tail)
+    except OSError:
+        # Kesib bo'lmasa ham (masalan ruxsat xatosi), bot ishga tushishiga
+        # to'sqinlik qilmaymiz — bu faqat disk tejash uchun yordamchi chora.
+        pass
+
+
 def start_bot_process(bot_id: int, workdir: str, start_cmd: str, env_pairs: dict) -> int:
     """Botni subprocess sifatida ishga tushiradi, PID qaytaradi."""
     log_path = os.path.join(workdir, "run.log")
+    _truncate_log_if_too_large(log_path)
     log_file = open(log_path, "a", encoding="utf-8")
 
     # DIQQAT (xavfsizlik): oldin os.environ.copy() ishlatilgan edi — bu HosterBot

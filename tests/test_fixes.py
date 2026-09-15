@@ -1574,3 +1574,66 @@ def test_bot_actions_apply_edit_imports_static_scan():
     import handlers.bot_actions as bot_actions_mod
     assert bot_actions_mod.static_scan is not None
     assert bot_actions_mod.static_scan("os.system('evil')") != []
+
+
+def test_truncate_log_if_too_large_leaves_small_files_untouched(tmp_path):
+    from services.deploy_manager import _truncate_log_if_too_large
+
+    log_path = tmp_path / "run.log"
+    log_path.write_text("kichik log\n")
+    _truncate_log_if_too_large(str(log_path))
+    assert log_path.read_text() == "kichik log\n"
+
+
+def test_truncate_log_if_too_large_shrinks_oversized_file_keeping_tail(tmp_path):
+    # DISK TO'LIB QOLISH FIX: run.log ilgari HECH QACHON kesilmas/rotatsiya
+    # qilinmas edi (har restart/rebuild eskisining oxiriga qo'shib borardi) —
+    # bu Render'da diskning cheksiz o'sib, "xotira to'ldi" degan xabarga olib
+    # kelishi mumkin edi. Endi belgilangan hajmdan katta run.log start_bot_process
+    # (va restore_running_bots) chaqirilganda avtomatik kesiladi.
+    from services.deploy_manager import (
+        _truncate_log_if_too_large, RUN_LOG_MAX_BYTES, RUN_LOG_KEEP_TAIL_BYTES,
+    )
+
+    log_path = tmp_path / "run.log"
+    with open(log_path, "wb") as f:
+        f.write(b"X" * (RUN_LOG_MAX_BYTES + 1000))
+        f.write(b"OXIRGI_QATOR_MARKERI")
+
+    before_size = log_path.stat().st_size
+    _truncate_log_if_too_large(str(log_path))
+    after_size = log_path.stat().st_size
+
+    assert after_size < before_size
+    assert after_size <= RUN_LOG_KEEP_TAIL_BYTES + 200  # kesish belgisi uchun kichik zaxira
+    content = log_path.read_bytes()
+    assert b"OXIRGI_QATOR_MARKERI" in content, "eng oxirgi loglar (diagnostika uchun eng muhimi) saqlanishi kerak"
+
+
+def test_truncate_log_if_too_large_handles_missing_file_gracefully(tmp_path):
+    from services.deploy_manager import _truncate_log_if_too_large
+    # Fayl mavjud bo'lmasa (masalan bot birinchi marta ishga tushayotganda) xato
+    # bermasligi va bot ishga tushishiga to'sqinlik qilmasligi kerak.
+    _truncate_log_if_too_large(str(tmp_path / "does_not_exist.log"))
+
+
+def test_start_bot_process_truncates_log_before_appending(tmp_path, monkeypatch):
+    # start_bot_process endi har chaqirilganda run.log hajmini tekshirib,
+    # kerak bo'lsa kesib olishi kerak — bu haqiqiy chaqiruv zanjirida to'g'ri
+    # ulanganini (import va joylashuvni) tasdiqlaydi.
+    import services.deploy_manager as dm
+
+    calls = []
+    monkeypatch.setattr(dm, "_truncate_log_if_too_large", lambda path: calls.append(path))
+    monkeypatch.setattr(dm, "db", type("FakeDb", (), {"get_bot": staticmethod(lambda bid: None)}))
+    monkeypatch.setattr(dm.subprocess, "Popen", lambda *a, **kw: type(
+        "FakeProc", (), {"pid": 999, "wait": lambda self: 0, "poll": lambda self: None}
+    )())
+    monkeypatch.setattr(dm.threading, "Thread", lambda *a, **kw: type(
+        "FakeThread", (), {"start": lambda self: None}
+    )(), raising=True)
+
+    workdir = str(tmp_path)
+    dm.start_bot_process(bot_id=1, workdir=workdir, start_cmd="python bot.py", env_pairs={})
+
+    assert calls == [str(tmp_path / "run.log")]
