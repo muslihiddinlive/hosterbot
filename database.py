@@ -232,6 +232,20 @@ def init_db():
             conn.execute("ALTER TABLE users ADD COLUMN lifetime_topup_stars INTEGER NOT NULL DEFAULT 0")
         except sqlite3.OperationalError:
             pass
+        try:
+            # YANGI FEATURE: bot egasini almashtirish (transfer) ikki tomonlama
+            # tasdiqlash bilan ishlaydi - eski ega "Ha" deganda owner_id DARHOL
+            # o'zgarmaydi, faqat shu ikki ustunga "kutilayotgan transfer" yoziladi.
+            # Yangi ega inline tugma bilan Qabul qiladi/Rad etadi - faqat Qabul
+            # qilinsa owner_id haqiqatan o'zgaradi. Shu davrda bot ESKI egasiga
+            # tegishli bo'lib qolaveradi (uning balansidan ishlaydi, u boshqaradi).
+            conn.execute("ALTER TABLE bots ADD COLUMN pending_transfer_to INTEGER")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE bots ADD COLUMN pending_transfer_msg_id INTEGER")
+        except sqlite3.OperationalError:
+            pass
 
 
 # ---------- users ----------
@@ -622,12 +636,55 @@ def get_bot(bot_id: int):
 
 
 def transfer_bot_owner(bot_id: int, new_owner_id: int):
-    """Botning owner_id'sini boshqa foydalanuvchiga o'tkazadi (egasini almashtirish).
-    Chaqiruvchi (handler) yangi egasining mavjudligini/holatini (approved, ban
-    emasligini va h.k.) OLDINDAN tekshirishi kerak — bu funksiya faqat DB
-    yozuvini yangilaydi, biznes-qoidalarni tekshirmaydi."""
+    """Botning owner_id'sini boshqa foydalanuvchiga o'tkazadi (egasini almashtirish) —
+    DARHOL, hech qanday tasdiqlashsiz. Chaqiruvchi (handler) yangi egasining
+    mavjudligini/holatini OLDINDAN tekshirishi kerak. Odatda to'g'ridan-to'g'ri
+    chaqirilmaydi — accept_pending_transfer() orqali, yangi ega qabul qilgandan
+    keyin ishlatiladi. Alohida qoldirilgan (masalan admin qo'lda majburlab
+    o'tkazmoqchi bo'lsa)."""
     with get_conn() as conn:
         conn.execute("UPDATE bots SET owner_id=? WHERE bot_id=?", (new_owner_id, bot_id))
+
+
+def set_pending_transfer(bot_id: int, new_owner_id: int, msg_id: int = None):
+    """1-bosqich: eski ega tasdiqlagandan keyin chaqiriladi. owner_id HALI
+    o'ZGARMAYDI - bot eski egasiga tegishli bo'lib qolaveradi (uning
+    balansidan ishlaydi, u boshqaradi), toki yangi ega qabul qilmaguncha."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE bots SET pending_transfer_to=?, pending_transfer_msg_id=? WHERE bot_id=?",
+            (new_owner_id, msg_id, bot_id),
+        )
+
+
+def clear_pending_transfer(bot_id: int):
+    """Kutilayotgan transferni bekor qiladi (rad etilganda yoki eski ega
+    qaytarib olganda) - owner_id o'zgarishsiz qoladi."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE bots SET pending_transfer_to=NULL, pending_transfer_msg_id=NULL WHERE bot_id=?",
+            (bot_id,),
+        )
+
+
+def accept_pending_transfer(bot_id: int, accepting_user_id: int) -> bool:
+    """2-bosqich: yangi ega 'Qabul qilish' bosganda chaqiriladi. Faqat
+    pending_transfer_to AYNAN shu accepting_user_id bo'lsa amalga oshadi
+    (boshqa birov tugmani "o'g'irlab" bosib olishining oldini olish uchun —
+    masalan eski callback xabari boshqa chatga forward qilingan bo'lsa).
+    Qaytaradi: True - transfer amalga oshgan, False - mos kelmadi (allaqachon
+    bekor qilingan, boshqa userga mo'ljallangan va h.k.)."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT pending_transfer_to FROM bots WHERE bot_id=?", (bot_id,)
+        ).fetchone()
+        if row is None or row["pending_transfer_to"] != accepting_user_id:
+            return False
+        conn.execute(
+            "UPDATE bots SET owner_id=?, pending_transfer_to=NULL, pending_transfer_msg_id=NULL WHERE bot_id=?",
+            (accepting_user_id, bot_id),
+        )
+        return True
 
 
 def get_bot_by_webhook(bot_id: int, webhook_secret: str):

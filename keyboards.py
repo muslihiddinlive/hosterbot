@@ -305,6 +305,18 @@ def edit_bot_menu_kb(bot_id: int, has_env: bool = False, webhook_proxy_enabled: 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def transfer_offer_kb(bot_id: int) -> InlineKeyboardMarkup:
+    """Bot topshirilayotgan yangi egaga yuboriladigan taklifdagi tugmalar —
+    faqat u qabul qilgandan keyin owner_id haqiqatan o'zgaradi (ikki
+    tomonlama tasdiqlash, handlers/bot_actions.py'dagi transfer oqimiga qarang)."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Qabul qilish", callback_data=f"transfer_accept:{bot_id}"),
+            InlineKeyboardButton(text="❌ Rad etish", callback_data=f"transfer_reject:{bot_id}"),
+        ],
+    ])
+
+
 def admin_panel_kb(is_superadmin: bool = False) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text="👥 Foydalanuvchilar", callback_data="admin_users")],

@@ -1702,3 +1702,97 @@ def test_transfer_kb_buttons_present_in_edit_menu_and_admin_view():
     admin_kb = admin_bot_view_kb(bot_row)
     admin_callbacks = {btn.callback_data for row in admin_kb.inline_keyboard for btn in row}
     assert "bot_transfer:7" in admin_callbacks
+
+
+def test_set_pending_transfer_does_not_change_owner_immediately(tmp_path, monkeypatch):
+    # IKKI TOMONLAMA TASDIQLASH FIX: eski ega "Ha" deganda owner_id DARHOL
+    # o'zgarmasligi kerak - faqat "kutilayotgan transfer" yoziladi. Bot
+    # yangi ega qabul qilmaguncha ESKI egasiga tegishli bo'lib qolaveradi
+    # (uning balansidan ishlaydi, u boshqaradi).
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    code_dir = tmp_path / "bot_1"
+    code_dir.mkdir()
+    bot_id = db_mod.create_bot(
+        owner_id=111, bot_username="testbot", bot_token=None, code_path=str(code_dir),
+        storage_file_id=None, is_zip=False, language="python",
+        build_cmd="", start_cmd="python bot.py",
+    )
+
+    db_mod.set_pending_transfer(bot_id, new_owner_id=222, msg_id=999)
+
+    bot_row = db_mod.get_bot(bot_id)
+    assert bot_row["owner_id"] == 111, "yangi ega hali qabul qilmagan - owner_id o'zgarmasligi kerak"
+    assert bot_row["pending_transfer_to"] == 222
+    assert bot_row["pending_transfer_msg_id"] == 999
+
+
+def test_accept_pending_transfer_changes_owner_only_for_matching_user(tmp_path, monkeypatch):
+    # accept_pending_transfer faqat AYNAN taklif qilingan user uchun ishlashi
+    # kerak - boshqa birov "eski" callback'ni bosib, o'ziga bot olib qolmasligi
+    # uchun (masalan xabar forward qilinsa yoki eski taklif qayta ko'rsatilsa).
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    code_dir = tmp_path / "bot_1"
+    code_dir.mkdir()
+    bot_id = db_mod.create_bot(
+        owner_id=111, bot_username="testbot", bot_token=None, code_path=str(code_dir),
+        storage_file_id=None, is_zip=False, language="python",
+        build_cmd="", start_cmd="python bot.py",
+    )
+    db_mod.set_pending_transfer(bot_id, new_owner_id=222)
+
+    # Boshqa user (555) qabul qilishga urinadi - rad etilishi kerak
+    wrong_result = db_mod.accept_pending_transfer(bot_id, accepting_user_id=555)
+    assert wrong_result is False
+    assert db_mod.get_bot(bot_id)["owner_id"] == 111, "noto'g'ri user qabul qilsa ham owner o'zgarmasligi kerak"
+
+    # To'g'ri user (222) qabul qiladi - endi o'zgarishi kerak
+    right_result = db_mod.accept_pending_transfer(bot_id, accepting_user_id=222)
+    assert right_result is True
+    bot_row = db_mod.get_bot(bot_id)
+    assert bot_row["owner_id"] == 222
+    assert bot_row["pending_transfer_to"] is None, "qabul qilingandan keyin pending maydonlar tozalanishi kerak"
+    assert bot_row["pending_transfer_msg_id"] is None
+
+
+def test_accept_pending_transfer_fails_when_nothing_pending(tmp_path, monkeypatch):
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    code_dir = tmp_path / "bot_1"
+    code_dir.mkdir()
+    bot_id = db_mod.create_bot(
+        owner_id=111, bot_username="testbot", bot_token=None, code_path=str(code_dir),
+        storage_file_id=None, is_zip=False, language="python",
+        build_cmd="", start_cmd="python bot.py",
+    )
+    # Hech qanday pending_transfer o'rnatilmagan holatda accept chaqirilsa
+    result = db_mod.accept_pending_transfer(bot_id, accepting_user_id=222)
+    assert result is False
+    assert db_mod.get_bot(bot_id)["owner_id"] == 111
+
+
+def test_clear_pending_transfer_resets_without_changing_owner(tmp_path, monkeypatch):
+    # Rad etilganda (yoki eski ega bekor qilganda) - owner_id o'zgarishsiz,
+    # faqat pending maydonlar tozalanishi kerak.
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    code_dir = tmp_path / "bot_1"
+    code_dir.mkdir()
+    bot_id = db_mod.create_bot(
+        owner_id=111, bot_username="testbot", bot_token=None, code_path=str(code_dir),
+        storage_file_id=None, is_zip=False, language="python",
+        build_cmd="", start_cmd="python bot.py",
+    )
+    db_mod.set_pending_transfer(bot_id, new_owner_id=222, msg_id=999)
+
+    db_mod.clear_pending_transfer(bot_id)
+
+    bot_row = db_mod.get_bot(bot_id)
+    assert bot_row["owner_id"] == 111
+    assert bot_row["pending_transfer_to"] is None
+    assert bot_row["pending_transfer_msg_id"] is None
+
+
+def test_transfer_offer_kb_has_accept_and_reject_buttons():
+    from keyboards import transfer_offer_kb
+    kb = transfer_offer_kb(42)
+    callbacks = {btn.callback_data for row in kb.inline_keyboard for btn in row}
+    assert "transfer_accept:42" in callbacks
+    assert "transfer_reject:42" in callbacks

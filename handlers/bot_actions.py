@@ -12,7 +12,7 @@ from aiogram.fsm.context import FSMContext
 import database as db
 from config import is_admin, is_superadmin, STORAGE_GROUP_ID, WEBHOOK_BASE_URL
 from states import ConfirmDelete, FixCode, FixRequirements, FixEnv, RenameBot, TransferBot
-from keyboards import bot_manage_kb, admin_bot_view_kb, cancel_kb, main_menu_kb, edit_bot_menu_kb
+from keyboards import bot_manage_kb, admin_bot_view_kb, cancel_kb, main_menu_kb, edit_bot_menu_kb, transfer_offer_kb
 from services.deploy_manager import start_bot_process, stop_bot_process, read_log_tail, is_running, format_log_block, run_build_command, bot_link_html, static_scan
 from services.resource_monitor import can_start_new_bot, bot_ram_mb, format_ram_limit_message
 from services.file_utils import (
@@ -625,10 +625,10 @@ async def receive_transfer_target(message: Message, state: FSMContext):
     bot_label = bot_row["bot_username"] or bot_row["display_name"] or f"Bot #{bot_id}"
     await message.answer(
         f"⚠️ <b>Tasdiqlang:</b> <code>{html.escape(bot_label)}</code> botini "
-        f"<b>{html.escape(target_label)}</b>'ga o'tkazmoqchimisiz?\n\n"
-        f"Bu amalni qaytarib bo'lmaydi — bot butun boshqaruvi (to'xtatish/ishga tushirish, "
-        f"tahrirlash, o'chirish) yangi egasiga o'tadi, sizda bu bot ustidan huquq qolmaydi "
-        f"(admin bo'lmasangiz).\n\n"
+        f"<b>{html.escape(target_label)}</b>'ga topshirmoqchimisiz?\n\n"
+        f"<b>{html.escape(target_label)}</b>'ga taklif yuboriladi — u qabul qilgandan "
+        f"keyingina egalik haqiqatan o'tadi. U qabul qilguncha bot <b>sizda</b> qoladi "
+        f"(sizning balansingizdan ishlaydi, siz boshqarasiz).\n\n"
         f"Tasdiqlash uchun <b>Ha</b> deb yozing, bekor qilish uchun pastdagi tugmani bosing.",
         parse_mode="HTML",
         reply_markup=cancel_kb(),
@@ -658,28 +658,117 @@ async def confirm_transfer(message: Message, state: FSMContext, bot: Bot):
         await message.answer("Ruxsat yo'q yoki bot topilmadi.", reply_markup=main_menu_kb(is_admin=is_admin(message.from_user.id)))
         return
 
-    old_owner_id = bot_row["owner_id"]
-    db.transfer_bot_owner(bot_id, new_owner_id)
-    await backup_database(bot)
-
     bot_label = bot_row["bot_username"] or bot_row["display_name"] or f"Bot #{bot_id}"
+
+    # MUHIM FIX (ikki tomonlama tasdiqlash): eski ega "Ha" deganda owner_id
+    # DARHOL o'zgarmaydi — chunki yangi ega buni bilmasligi yoki xohlamasligi
+    # mumkin (masalan boshqa odam adashib/ataylab uning ID'sini kiritib qo'ysa).
+    # Shu sabab avval faqat "kutilayotgan transfer" yoziladi (owner_id ESKI
+    # egada qoladi — u hali ham botni boshqaradi va UNING balansidan ishlaydi),
+    # yangi egaga taklif yuboriladi, va faqat U "Qabul qilish" bossa owner_id
+    # haqiqatan o'zgaradi. Rad etsa yoki javob bermasa — bot eskisida qoladi.
+    try:
+        sent = await bot.send_message(
+            new_owner_id,
+            f"🔁 <b>Sizga bot topshirilmoqchi:</b> <code>{html.escape(bot_label)}</code>\n\n"
+            f"Qabul qilsangiz, botning to'liq egasi bo'lasiz (boshqarish, "
+            f"tahrirlash, to'xtatish/ishga tushirish, o'chirish huquqi sizga o'tadi, "
+            f"shu bilan birga bot endi SIZNING Stars balansingizdan ishlaydi).\n\n"
+            f"Rad etsangiz yoki javob bermasangiz, bot avvalgi egasida qolaveradi.",
+            parse_mode="HTML",
+            reply_markup=transfer_offer_kb(bot_id),
+        )
+    except Exception:
+        await message.answer(
+            "⚠️ Yangi egaga xabar yuborib bo'lmadi (u botni bloklagan yoki hech qachon "
+            "/start bosmagan bo'lishi mumkin). Transfer boshlanmadi — bot sizda qoldi.",
+        )
+        return
+
+    db.set_pending_transfer(bot_id, new_owner_id, msg_id=sent.message_id)
+
     await message.answer(
-        f"✅ <code>{html.escape(bot_label)}</code> botining egasi <b>{html.escape(target_label)}</b>'ga o'tkazildi.",
+        f"📨 <b>{html.escape(target_label)}</b>'ga taklif yuborildi. U qabul qilguncha "
+        f"bot <b>sizda</b> qoladi (sizning balansingizdan ishlaydi, siz boshqarasiz). "
+        f"Qabul qilinishi bilan sizga xabar beramiz.",
         parse_mode="HTML",
         reply_markup=main_menu_kb(is_admin=is_admin(message.from_user.id)),
     )
 
-    # Yangi egaga ham xabar beramiz — u botni "Mening botlarim"da darhol ko'ra oladi,
-    # lekin bildirishnoma bo'lmasa buni sezmasligi mumkin.
+
+@router.callback_query(F.data.startswith("transfer_accept:"))
+async def cb_transfer_accept(callback: CallbackQuery, bot: Bot):
+    bot_id = int(callback.data.split(":")[1])
+    bot_row = db.get_bot(bot_id)
+    if bot_row is None:
+        await callback.answer("Bot topilmadi (o'chirilgan bo'lishi mumkin).", show_alert=True)
+        return
+
+    accepted = db.accept_pending_transfer(bot_id, callback.from_user.id)
+    if not accepted:
+        # pending_transfer_to bu userga mos kelmadi — allaqachon bekor qilingan,
+        # boshqa userga qayta taklif qilingan, yoki eski (forward qilingan) xabar.
+        await callback.answer("Bu taklif endi amal qilmaydi.", show_alert=True)
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return
+
+    await backup_database(bot)
+
+    bot_label = bot_row["bot_username"] or bot_row["display_name"] or f"Bot #{bot_id}"
     try:
-        await bot.send_message(
-            new_owner_id,
-            f"🔁 Sizga bot topshirildi: <code>{html.escape(bot_label)}</code>\n\n"
-            f"Endi uni \"Mening botlarim\" bo'limidan boshqarishingiz mumkin.",
+        await callback.message.edit_text(
+            f"✅ Qabul qilindi! <code>{html.escape(bot_label)}</code> endi sizga tegishli.",
             parse_mode="HTML",
         )
     except Exception:
-        pass  # yangi ega botni bloklagan/hech qachon /start bosmagan bo'lishi mumkin
+        pass
+    await callback.answer("Qabul qilindi!")
+
+    try:
+        await bot.send_message(
+            bot_row["owner_id"],
+            f"✅ <b>{callback.from_user.first_name or callback.from_user.id}</b> "
+            f"<code>{html.escape(bot_label)}</code> botini qabul qildi — egalik endi unga o'tdi.",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data.startswith("transfer_reject:"))
+async def cb_transfer_reject(callback: CallbackQuery, bot: Bot):
+    bot_id = int(callback.data.split(":")[1])
+    bot_row = db.get_bot(bot_id)
+    if bot_row is None:
+        await callback.answer("Bot topilmadi.", show_alert=True)
+        return
+
+    # Faqat AYNAN shu taklif qilingan user rad eta oladi — boshqa birov
+    # tugmani bosib, taklifni buzib qo'yishining oldini olamiz.
+    if bot_row["pending_transfer_to"] != callback.from_user.id:
+        await callback.answer("Bu taklif sizga tegishli emas.", show_alert=True)
+        return
+
+    db.clear_pending_transfer(bot_id)
+
+    bot_label = bot_row["bot_username"] or bot_row["display_name"] or f"Bot #{bot_id}"
+    try:
+        await callback.message.edit_text(f"❌ Rad etildi: <code>{html.escape(bot_label)}</code>", parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer("Rad etildi.")
+
+    try:
+        await bot.send_message(
+            bot_row["owner_id"],
+            f"❌ <code>{html.escape(bot_label)}</code> botini topshirish rad etildi — bot sizda qoladi.",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
 
 
 # ---------- Crash-fix oqimi: kodni almashtirish ----------
