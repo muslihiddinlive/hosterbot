@@ -564,8 +564,8 @@ async def cb_bot_transfer(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(
         "🔁 <b>Bot egasini almashtirish</b>\n\n"
         "Yangi egasining <b>Telegram ID</b> yoki <b>@username</b>'ini yuboring.\n\n"
-        "⚠️ Yangi ega botimizda ro'yxatdan o'tgan va tasdiqlangan (approved) "
-        "bo'lishi kerak — aks holda transfer qilib bo'lmaydi.",
+        "⚠️ Yangi ega botimizga kamida bir marta <b>/start</b> bosgan va bloklanmagan "
+        "(ban qilinmagan) bo'lishi kerak.",
         parse_mode="HTML",
         reply_markup=cancel_kb(),
     )
@@ -604,10 +604,19 @@ async def receive_transfer_target(message: Message, state: FSMContext):
         )
         return
 
-    if target_user["status"] != "approved":
+    # MUHIM FIX: ilgari bu yerda target_user["status"] == "approved" talab
+    # qilinardi — lekin "approved" holati faqat admin tomonidan QO'LDA
+    # berilgan "yangi bot qo'shish huquqi"ga tegishli, pul to'lagan yoki
+    # oddiy foydalanuvchilar ham /start bosgandan keyin ODATDA "pending"da
+    # qolaveradi. Transfer — shunchaki egalikni almashtirish, "yangi bot
+    # qo'shish huquqi" bilan bog'liq emas, shu sabab bu tekshiruv noto'g'ri
+    # edi (haqiqiy, hatto pul to'lagan foydalanuvchilarga transfer qilib
+    # bo'lmasdi). Endi faqat: (1) foydalanuvchi ro'yxatdan o'tgan (yuqorida
+    # tekshirilgan) va (2) ban qilinmagan bo'lishi kifoya.
+    if target_user["is_banned"]:
         await message.answer(
-            "❌ Bu foydalanuvchi hali tasdiqlanmagan (approved emas). Avval admin uni "
-            "tasdiqlashi kerak, shundan keyin transfer qilishingiz mumkin.",
+            "❌ Bu foydalanuvchi hozir bloklangan (ban). Ban olib tashlanmaguncha "
+            "unga transfer qilib bo'lmaydi.",
             reply_markup=cancel_kb(),
         )
         return
@@ -715,12 +724,27 @@ async def cb_transfer_accept(callback: CallbackQuery, bot: Bot):
             pass
         return
 
+    # MUHIM FIX (talab qilingan xatti-harakat): transfer qabul qilingach, bot
+    # ISHLAB TURGAN bo'lsa ham DARHOL to'xtatiladi — yangi ega o'z Stars
+    # balansi, limitlari va roziligi bilan "Ishga tushirish" tugmasini bosib,
+    # yoqish mezonlarini (balans yetarliligi va h.k.) qaytadan o'tashi kerak.
+    # Aks holda bot eski egasining zimmasida tekshirilgan holatda yangi
+    # egaga "yashirincha ishlab turgan holda" o'tib ketardi.
+    if bot_row["status"] == "running":
+        try:
+            await asyncio.to_thread(stop_bot_process, bot_id)
+        except Exception:
+            log.exception(f"Transfer paytida botni to'xtatishda xato (bot_id={bot_id})")
+        db.set_bot_status(bot_id, "stopped", None)
+
     await backup_database(bot)
 
     bot_label = bot_row["bot_username"] or bot_row["display_name"] or f"Bot #{bot_id}"
     try:
         await callback.message.edit_text(
-            f"✅ Qabul qilindi! <code>{html.escape(bot_label)}</code> endi sizga tegishli.",
+            f"✅ Qabul qilindi! <code>{html.escape(bot_label)}</code> endi sizga tegishli.\n\n"
+            f"⏸ Bot xavfsizlik uchun to'xtatilgan holatda — uni ishga tushirish uchun "
+            f"\"Mening botlarim\" bo'limidan kirib, ▶️ Ishga tushirish tugmasini bosing.",
             parse_mode="HTML",
         )
     except Exception:

@@ -1656,20 +1656,23 @@ def test_transfer_bot_owner_updates_db(tmp_path, monkeypatch):
     assert db_mod.get_bot(bot_id)["owner_id"] == 222
 
 
-def test_transfer_target_must_be_approved_user(tmp_path, monkeypatch):
-    # Xavfsizlik/mantiq talabi: transfer faqat approved (tasdiqlangan) userga
-    # qilinishi kerak - handlers/bot_actions.py'dagi receive_transfer_target
-    # shuni tekshiradi. Bu yerda o'sha tekshiruv mantig'ini alohida sinaymiz
-    # (handler'ning o'zini to'liq Telegram mock'siz chaqirish qiyin).
+def test_transfer_target_pending_status_is_allowed_only_ban_blocks(tmp_path, monkeypatch):
+    # MUHIM FIX: ilgari transfer faqat "approved" statusdagi foydalanuvchilarga
+    # ruxsat berilardi - bu noto'g'ri edi, chunki "approved" status "yangi bot
+    # qo'shish huquqi"ga tegishli, transfer bilan bog'liq emas (hatto pul
+    # to'lagan foydalanuvchilar ham odatda "pending"da qolaveradi). Endi
+    # "pending" statusdagi (lekin ban qilinmagan) foydalanuvchiga ham transfer
+    # qilish mumkin bo'lishi kerak - faqat is_banned=1 bo'lsa bloklanadi.
     db_mod = _fresh_db(tmp_path, monkeypatch)
     db_mod.upsert_user(999, "pendinguser", "Test")
     user = db_mod.get_user(999)
     assert user["status"] == "pending"  # default holat
+    assert user["is_banned"] == 0  # transfer bloklanmasligi kerak bo'lgan holat
 
-    db_mod.upsert_user(888, "approveduser", "Test2")
-    db_mod.set_user_status(888, "approved")
-    approved_user = db_mod.get_user(888)
-    assert approved_user["status"] == "approved"
+    db_mod.upsert_user(888, "banneduser", "Test2")
+    db_mod.set_user_banned(888, True)
+    banned_user = db_mod.get_user(888)
+    assert banned_user["is_banned"] == 1  # transfer BLOKLANISHI kerak bo'lgan holat
 
 
 def test_transfer_target_lookup_by_id_or_username(tmp_path, monkeypatch):
@@ -1796,3 +1799,78 @@ def test_transfer_offer_kb_has_accept_and_reject_buttons():
     callbacks = {btn.callback_data for row in kb.inline_keyboard for btn in row}
     assert "transfer_accept:42" in callbacks
     assert "transfer_reject:42" in callbacks
+
+
+def test_transfer_accept_stops_running_bot(tmp_path, monkeypatch):
+    # MUHIM FIX (talab qilingan xatti-harakat): transfer qabul qilingach, bot
+    # ISHLAB TURGAN bo'lsa ham darhol to'xtatilishi kerak - yangi ega o'z
+    # yoqish mezonlarini (balans va h.k.) "Ishga tushirish" bosganda qaytadan
+    # o'tashi kerak, aks holda bot eski egasi zimmasida tekshirilgan holatda
+    # "yashirincha ishlab turgan holda" yangi egaga o'tib ketardi.
+    import asyncio
+    import handlers.bot_actions as bot_actions_mod
+
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    code_dir = tmp_path / "bot_1"
+    code_dir.mkdir()
+    bot_id = db_mod.create_bot(
+        owner_id=111, bot_username="testbot", bot_token=None, code_path=str(code_dir),
+        storage_file_id=None, is_zip=False, language="python",
+        build_cmd="", start_cmd="python bot.py",
+    )
+    db_mod.set_bot_status(bot_id, "running", 12345)
+    db_mod.set_pending_transfer(bot_id, new_owner_id=222)
+
+    stop_calls = []
+    sent_messages = []
+    monkeypatch.setattr(bot_actions_mod, "db", db_mod)
+    monkeypatch.setattr(bot_actions_mod, "stop_bot_process", lambda bid: stop_calls.append(bid))
+    monkeypatch.setattr(bot_actions_mod, "backup_database", lambda bot: _noop_coro())
+
+    class FakeUser:
+        id = 222
+        first_name = "TestUser"
+
+    class FakeMsg:
+        async def edit_text(self, *a, **kw):
+            pass
+
+    class FakeCallback:
+        data = f"transfer_accept:{bot_id}"
+        from_user = FakeUser()
+        message = FakeMsg()
+
+        async def answer(self, *a, **kw):
+            pass
+
+    class FakeBot:
+        async def send_message(self, chat_id, text, **kwargs):
+            sent_messages.append((chat_id, text))
+
+    asyncio.run(bot_actions_mod.cb_transfer_accept(FakeCallback(), FakeBot()))
+
+    assert stop_calls == [bot_id], "ishlab turgan bot to'xtatilishi kerak edi"
+    bot_row = db_mod.get_bot(bot_id)
+    assert bot_row["owner_id"] == 222
+    assert bot_row["status"] == "stopped"
+
+
+async def _noop_coro():
+    return None
+
+
+def test_transfer_button_present_in_main_bot_manage_menu():
+    # UX/root-cause fix: transfer tugmasi ilgari FAQAT "Botni tahrirlash" ichki
+    # menyusida (edit_bot_menu_kb) bor edi, asosiy bot boshqaruv menyusida
+    # (bot_manage_kb - "Mening botlarim" orqali ochiladigan) YO'Q edi. Bu
+    # ehtimol "qayta transfer qilolmayapman" muammosining sababi edi - tugma
+    # shunchaki topilmagan, funksiya buzuq emas edi.
+    from keyboards import bot_manage_kb
+
+    class FakeBotRow(dict):
+        pass
+
+    bot_row = FakeBotRow(bot_id=9, status="running", stars_hosted=0)
+    kb = bot_manage_kb(bot_row, has_env=False)
+    callbacks = {btn.callback_data for row in kb.inline_keyboard for btn in row}
+    assert "bot_transfer:9" in callbacks

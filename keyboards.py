@@ -279,6 +279,7 @@ def bot_manage_kb(bot_row, has_env: bool = False, viewer_is_vip: bool = False) -
         InlineKeyboardButton(text="📡 Live log", callback_data=f"bot_live_log:{bot_row['bot_id']}"),
     ])
     rows.append([InlineKeyboardButton(text="ℹ️ Bot haqida (kod/log/env)", callback_data=f"bot_info:{bot_row['bot_id']}")])
+    rows.append([InlineKeyboardButton(text="🔁 Egasini almashtirish", callback_data=f"bot_transfer:{bot_row['bot_id']}")])
     rows.append([InlineKeyboardButton(text="🗑 O'chirish", callback_data=f"bot_delete:{bot_row['bot_id']}")])
     rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="bot_list_back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
