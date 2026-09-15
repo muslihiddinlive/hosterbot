@@ -96,6 +96,14 @@ class RenameBot(StatesGroup):
     waiting_name = State()
 
 
+class TransferBot(StatesGroup):
+    """Bot egasini almashtirish — yangi egasini username yoki telegram_id orqali
+    kiritish, so'ng tasdiqlash (bekor qilib bo'lmaydigan amal, shu sabab alohida
+    tasdiqlash bosqichi bor)."""
+    waiting_new_owner = State()
+    waiting_confirm = State()
+
+
 class AIChat(StatesGroup):
     """Foydalanuvchi biror tugma/buyruq bilan mos kelmaydigan erkin matn yozganda,
     bot 'AI'ga yozyapsizmi?' deb so'raydi (fallback handler, handlers/ai_chat.py).

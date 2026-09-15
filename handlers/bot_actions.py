@@ -11,7 +11,7 @@ from aiogram.fsm.context import FSMContext
 
 import database as db
 from config import is_admin, is_superadmin, STORAGE_GROUP_ID, WEBHOOK_BASE_URL
-from states import ConfirmDelete, FixCode, FixRequirements, FixEnv, RenameBot
+from states import ConfirmDelete, FixCode, FixRequirements, FixEnv, RenameBot, TransferBot
 from keyboards import bot_manage_kb, admin_bot_view_kb, cancel_kb, main_menu_kb, edit_bot_menu_kb
 from services.deploy_manager import start_bot_process, stop_bot_process, read_log_tail, is_running, format_log_block, run_build_command, bot_link_html, static_scan
 from services.resource_monitor import can_start_new_bot, bot_ram_mb, format_ram_limit_message
@@ -547,6 +547,139 @@ async def receive_new_bot_name(message: Message, state: FSMContext):
         parse_mode="HTML",
         reply_markup=bot_manage_kb(bot_row, has_env=has_env, viewer_is_vip=is_admin(message.from_user.id)),
     )
+
+
+# ---------- Bot egasini almashtirish (transfer) ----------
+
+@router.callback_query(F.data.startswith("bot_transfer:"))
+async def cb_bot_transfer(callback: CallbackQuery, state: FSMContext):
+    bot_id = int(callback.data.split(":")[1])
+    bot_row = db.get_bot(bot_id)
+    if not _authorized(callback, bot_row):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+
+    await state.update_data(transfer_bot_id=bot_id)
+    await state.set_state(TransferBot.waiting_new_owner)
+    await callback.message.answer(
+        "🔁 <b>Bot egasini almashtirish</b>\n\n"
+        "Yangi egasining <b>Telegram ID</b> yoki <b>@username</b>'ini yuboring.\n\n"
+        "⚠️ Yangi ega botimizda ro'yxatdan o'tgan va tasdiqlangan (approved) "
+        "bo'lishi kerak — aks holda transfer qilib bo'lmaydi.",
+        parse_mode="HTML",
+        reply_markup=cancel_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(TransferBot.waiting_new_owner)
+async def receive_transfer_target(message: Message, state: FSMContext):
+    data = await state.get_data()
+    bot_id = data.get("transfer_bot_id")
+    bot_row = db.get_bot(bot_id)
+    if bot_row is None or (bot_row["owner_id"] != message.from_user.id and not is_admin(message.from_user.id)):
+        await state.clear()
+        await message.answer("Ruxsat yo'q yoki bot topilmadi.", reply_markup=main_menu_kb(is_admin=is_admin(message.from_user.id)))
+        return
+
+    raw = (message.text or "").strip()
+    if not raw:
+        await message.answer("Bo'sh bo'lishi mumkin emas. Telegram ID yoki @username yuboring.")
+        return
+
+    # ID (faqat raqam, "-" ishlatilmaydi chunki user ID'lar manfiy bo'lmaydi) yoki
+    # username (harf bilan boshlanishi mumkin, @ bilan yoki @siz) — ikkalasini ham
+    # qo'llab-quvvatlaymiz, chunki oddiy foydalanuvchi odatda ID'ni bilmaydi.
+    if raw.lstrip("@").isdigit():
+        target_user = db.get_user(int(raw.lstrip("@")))
+    else:
+        target_user = db.get_user_by_username(raw)
+
+    if target_user is None:
+        await message.answer(
+            "❌ Bunday foydalanuvchi topilmadi. U avval botimizga <b>/start</b> bosib, "
+            "ro'yxatdan o'tgan bo'lishi kerak. Qaytadan urinib ko'ring yoki bekor qiling.",
+            parse_mode="HTML",
+            reply_markup=cancel_kb(),
+        )
+        return
+
+    if target_user["status"] != "approved":
+        await message.answer(
+            "❌ Bu foydalanuvchi hali tasdiqlanmagan (approved emas). Avval admin uni "
+            "tasdiqlashi kerak, shundan keyin transfer qilishingiz mumkin.",
+            reply_markup=cancel_kb(),
+        )
+        return
+
+    if target_user["telegram_id"] == bot_row["owner_id"]:
+        await message.answer(
+            "❌ Bu bot allaqachon shu foydalanuvchiga tegishli.", reply_markup=cancel_kb(),
+        )
+        return
+
+    target_label = f"@{target_user['username']}" if target_user["username"] else str(target_user["telegram_id"])
+    await state.update_data(transfer_new_owner_id=target_user["telegram_id"], transfer_target_label=target_label)
+    await state.set_state(TransferBot.waiting_confirm)
+
+    bot_label = bot_row["bot_username"] or bot_row["display_name"] or f"Bot #{bot_id}"
+    await message.answer(
+        f"⚠️ <b>Tasdiqlang:</b> <code>{html.escape(bot_label)}</code> botini "
+        f"<b>{html.escape(target_label)}</b>'ga o'tkazmoqchimisiz?\n\n"
+        f"Bu amalni qaytarib bo'lmaydi — bot butun boshqaruvi (to'xtatish/ishga tushirish, "
+        f"tahrirlash, o'chirish) yangi egasiga o'tadi, sizda bu bot ustidan huquq qolmaydi "
+        f"(admin bo'lmasangiz).\n\n"
+        f"Tasdiqlash uchun <b>Ha</b> deb yozing, bekor qilish uchun pastdagi tugmani bosing.",
+        parse_mode="HTML",
+        reply_markup=cancel_kb(),
+    )
+
+
+@router.message(TransferBot.waiting_confirm)
+async def confirm_transfer(message: Message, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    bot_id = data.get("transfer_bot_id")
+    new_owner_id = data.get("transfer_new_owner_id")
+    target_label = data.get("transfer_target_label", "")
+
+    if (message.text or "").strip().lower() != "ha":
+        await message.answer(
+            "Bekor qilingan deb hisoblanmoqda (faqat aniq <b>Ha</b> yozilsa tasdiqlanadi). "
+            "Qaytadan boshlash uchun bot menyusiga o'ting.",
+            parse_mode="HTML",
+            reply_markup=cancel_kb(),
+        )
+        return
+
+    await state.clear()
+
+    bot_row = db.get_bot(bot_id)
+    if bot_row is None or (bot_row["owner_id"] != message.from_user.id and not is_admin(message.from_user.id)):
+        await message.answer("Ruxsat yo'q yoki bot topilmadi.", reply_markup=main_menu_kb(is_admin=is_admin(message.from_user.id)))
+        return
+
+    old_owner_id = bot_row["owner_id"]
+    db.transfer_bot_owner(bot_id, new_owner_id)
+    await backup_database(bot)
+
+    bot_label = bot_row["bot_username"] or bot_row["display_name"] or f"Bot #{bot_id}"
+    await message.answer(
+        f"✅ <code>{html.escape(bot_label)}</code> botining egasi <b>{html.escape(target_label)}</b>'ga o'tkazildi.",
+        parse_mode="HTML",
+        reply_markup=main_menu_kb(is_admin=is_admin(message.from_user.id)),
+    )
+
+    # Yangi egaga ham xabar beramiz — u botni "Mening botlarim"da darhol ko'ra oladi,
+    # lekin bildirishnoma bo'lmasa buni sezmasligi mumkin.
+    try:
+        await bot.send_message(
+            new_owner_id,
+            f"🔁 Sizga bot topshirildi: <code>{html.escape(bot_label)}</code>\n\n"
+            f"Endi uni \"Mening botlarim\" bo'limidan boshqarishingiz mumkin.",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass  # yangi ega botni bloklagan/hech qachon /start bosmagan bo'lishi mumkin
 
 
 # ---------- Crash-fix oqimi: kodni almashtirish ----------

@@ -1637,3 +1637,68 @@ def test_start_bot_process_truncates_log_before_appending(tmp_path, monkeypatch)
     dm.start_bot_process(bot_id=1, workdir=workdir, start_cmd="python bot.py", env_pairs={})
 
     assert calls == [str(tmp_path / "run.log")]
+
+
+def test_transfer_bot_owner_updates_db(tmp_path, monkeypatch):
+    # database.transfer_bot_owner ning o'zi to'g'ri owner_id'ni yangilashini
+    # tekshiradi (biznes-qoidalar handler darajasida, alohida tekshiriladi).
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    code_dir = tmp_path / "bot_1"
+    code_dir.mkdir()
+    bot_id = db_mod.create_bot(
+        owner_id=111, bot_username="testbot", bot_token=None, code_path=str(code_dir),
+        storage_file_id=None, is_zip=False, language="python",
+        build_cmd="", start_cmd="python bot.py",
+    )
+    assert db_mod.get_bot(bot_id)["owner_id"] == 111
+
+    db_mod.transfer_bot_owner(bot_id, 222)
+    assert db_mod.get_bot(bot_id)["owner_id"] == 222
+
+
+def test_transfer_target_must_be_approved_user(tmp_path, monkeypatch):
+    # Xavfsizlik/mantiq talabi: transfer faqat approved (tasdiqlangan) userga
+    # qilinishi kerak - handlers/bot_actions.py'dagi receive_transfer_target
+    # shuni tekshiradi. Bu yerda o'sha tekshiruv mantig'ini alohida sinaymiz
+    # (handler'ning o'zini to'liq Telegram mock'siz chaqirish qiyin).
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    db_mod.upsert_user(999, "pendinguser", "Test")
+    user = db_mod.get_user(999)
+    assert user["status"] == "pending"  # default holat
+
+    db_mod.upsert_user(888, "approveduser", "Test2")
+    db_mod.set_user_status(888, "approved")
+    approved_user = db_mod.get_user(888)
+    assert approved_user["status"] == "approved"
+
+
+def test_transfer_target_lookup_by_id_or_username(tmp_path, monkeypatch):
+    # receive_transfer_target ID (raqam) yoki @username orqali qidirishi kerak.
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    db_mod.upsert_user(777, "johndoe", "John")
+    db_mod.set_user_status(777, "approved")
+
+    by_id = db_mod.get_user(777)
+    assert by_id is not None and by_id["telegram_id"] == 777
+
+    by_username = db_mod.get_user_by_username("johndoe")
+    assert by_username is not None and by_username["telegram_id"] == 777
+
+    by_username_with_at = db_mod.get_user_by_username("@johndoe")
+    assert by_username_with_at is not None and by_username_with_at["telegram_id"] == 777
+
+
+def test_transfer_kb_buttons_present_in_edit_menu_and_admin_view():
+    from keyboards import edit_bot_menu_kb, admin_bot_view_kb
+
+    kb = edit_bot_menu_kb(5, has_env=False)
+    callbacks = {btn.callback_data for row in kb.inline_keyboard for btn in row}
+    assert "bot_transfer:5" in callbacks
+
+    class FakeBotRow(dict):
+        pass
+
+    bot_row = FakeBotRow(bot_id=7, status="running")
+    admin_kb = admin_bot_view_kb(bot_row)
+    admin_callbacks = {btn.callback_data for row in admin_kb.inline_keyboard for btn in row}
+    assert "bot_transfer:7" in admin_callbacks

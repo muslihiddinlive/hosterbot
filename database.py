@@ -621,6 +621,15 @@ def get_bot(bot_id: int):
         return _decrypt_bot_row(row)
 
 
+def transfer_bot_owner(bot_id: int, new_owner_id: int):
+    """Botning owner_id'sini boshqa foydalanuvchiga o'tkazadi (egasini almashtirish).
+    Chaqiruvchi (handler) yangi egasining mavjudligini/holatini (approved, ban
+    emasligini va h.k.) OLDINDAN tekshirishi kerak — bu funksiya faqat DB
+    yozuvini yangilaydi, biznes-qoidalarni tekshirmaydi."""
+    with get_conn() as conn:
+        conn.execute("UPDATE bots SET owner_id=? WHERE bot_id=?", (new_owner_id, bot_id))
+
+
 def get_bot_by_webhook(bot_id: int, webhook_secret: str):
     """GitHub webhook so'rovi kelganda, URL'dagi bot_id+secret ikkalasi ham
     to'g'ri mos kelgan botni topadi (secret noto'g'ri bo'lsa None qaytaradi —

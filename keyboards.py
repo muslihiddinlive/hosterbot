@@ -296,6 +296,7 @@ def edit_bot_menu_kb(bot_id: int, has_env: bool = False, webhook_proxy_enabled: 
     ]
     env_label = "🔑 ENV tahrirlash/qo'shish" if has_env else "🔑 ENV qo'shish"
     rows.append([InlineKeyboardButton(text=env_label, callback_data=f"fix_env:{bot_id}")])
+    rows.append([InlineKeyboardButton(text="🔁 Egasini almashtirish", callback_data=f"bot_transfer:{bot_id}")])
     if webhook_proxy_enabled:
         rows.append([InlineKeyboardButton(text="🌐 Webhook proxy: YOQILGAN (o'chirish)", callback_data=f"webhook_proxy_off:{bot_id}")])
     else:
@@ -480,6 +481,7 @@ def admin_bot_view_kb(bot_row) -> InlineKeyboardMarkup:
     ])
     rows.append([InlineKeyboardButton(text="ℹ️ Kod/log/env", callback_data=f"bot_info:{bot_row['bot_id']}")])
     rows.append([InlineKeyboardButton(text="🧪 Shaxsiy test-deploy (o'z tokening bilan)", callback_data=f"admin_test_deploy:{bot_row['bot_id']}")])
+    rows.append([InlineKeyboardButton(text="🔁 Egasini almashtirish", callback_data=f"bot_transfer:{bot_row['bot_id']}")])
     rows.append([InlineKeyboardButton(text="🗑 O'chirish", callback_data=f"bot_delete:{bot_row['bot_id']}")])
     rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_all_bots")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
