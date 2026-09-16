@@ -36,6 +36,16 @@ STAR_BALANCE_WATCHDOG_INTERVAL_SEC = 300
 STAR_BALANCE_ALERT_THRESHOLD = 1000
 DATA_CHANGE_CHECK_INTERVAL_SEC = 1   # workdir har necha soniyada tekshiriladi (yengil, tez)
 DATA_CHANGE_DEBOUNCE_SEC = 2         # o'zgarish sezilgandan necha soniya keyin backup qilinadi
+# MUHIM FIX (real production'da kuzatilgan): FAOL botlar (masalan soniyasiga
+# bir necha foydalanuvchi so'rovi bo'lgan, har so'rovda JSON/statistika faylini
+# yangilaydigan botlar) uchun 2 soniyalik debounce YETARLI EMAS — har backup
+# tugashi bilan DARHOL yangi o'zgarish topilib, deyarli TO'XTOVSIZ backup
+# yuborilardi (Data Storage guruhini bir xil "Bot #N — data snapshot"
+# xabarlari bilan to'ldirib yuboradi, Telegram rate-limit'ga tez uchraydi,
+# va resurslarni behuda sarflaydi). Shu sabab debounce'dan tashqari THROTTLE
+# ham qo'shildi — bitta bot uchun ikkita backup orasida bu qadar VAQT
+# o'tishi SHART, hatto workdir tinimsiz o'zgarib tursa ham.
+DATA_BACKUP_MIN_INTERVAL_SEC = 300   # bitta bot uchun backup'lar orasidagi eng kam interval (5 daqiqa)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("hosterbot")
@@ -482,6 +492,39 @@ async def star_balance_watchdog():
             log.warning(f"Star balance watchdog xatoligi: {e}")
 
 
+def _should_backup_now(bot_id: int, sig, now: float, last_sig: dict, due_at: dict, last_backup_at: dict) -> bool:
+    """data_backup_watchdog'ning bitta tsikl mantig'i — test qilish uchun
+    alohida funksiyaga chiqarilgan. state-lug'atlarni (last_sig, due_at,
+    last_backup_at) JOYIDA o'zgartiradi (watchdog'dagi bilan bir xil),
+    True qaytarsa — HOZIR backup qilinishi kerak (va chaqiruvchi keyin
+    last_backup_at[bot_id] = now qilishi kerak).
+
+    MUHIM BUG FIX: ilgari "imzo o'zgardimi" va "muddat keldimi" tekshiruvlari
+    if/elif kabi KETMA-KET edi — agar imzo doim (har chaqiruvda) o'zgarib
+    tursa (masalan juda faol bot, run.log kabi emas endi, lekin haqiqiy
+    ma'lumot fayli tinimsiz yozilsa), birinchi shart HAR DOIM True bo'lib,
+    ikkinchi (muddat) shart HECH QACHON tekshirilmasdi — natijada BUNDAY
+    BOT UCHUN BACKUP UMUMAN HECH QACHON BO'LMASDI (aksincha, "juda tez-tez"
+    emas, balki "umuman yo'q"). Endi ikkalasi MUSTAQIL tekshiriladi: imzo
+    o'zgarishi FAQAT due_at'ni birinchi marta belgilash uchun ishlatiladi
+    (setdefault — keyingi o'zgarishlar muddatni SURMAYDI), muddat tekshiruvi
+    esa har doim, imzo shu safar o'zgargan-o'zgarmaganidan qat'i nazar, amalga
+    oshadi."""
+    if last_sig.get(bot_id) != sig:
+        last_sig[bot_id] = sig
+        due_at.setdefault(bot_id, now + DATA_CHANGE_DEBOUNCE_SEC)
+
+    if bot_id in due_at and now >= due_at[bot_id]:
+        if bot_id in last_backup_at:
+            since_last = now - last_backup_at[bot_id]
+            if since_last < DATA_BACKUP_MIN_INTERVAL_SEC:
+                return False  # muddat hali kelmagan — due_at ushlab turiladi, keyingi siklda qayta tekshiriladi
+        due_at.pop(bot_id)
+        return True
+
+    return False
+
+
 async def data_backup_watchdog():
     """
     YANGI (o'zgarish-asosli): endi belgilangan interval bilan EMAS, balki
@@ -497,9 +540,22 @@ async def data_backup_watchdog():
     yana yozish bo'lib qolsa, u holat diskda/RAM'da qoladi va KEYINGI tekshiruv
     siklida yangi o'zgarish sifatida avtomatik tutib olinadi — hech narsa
     yo'qolmaydi, faqat navbatdagi backup'ga kiradi.
+
+    THROTTLE (MUHIM FIX): yuqoridagi debounce FAOL botlar uchun yetarli emas —
+    agar bot tinimsiz yozib tursa (masalan har foydalanuvchi so'roviga javoban
+    statistika/JSON faylini yangilaydigan bot, soniyasiga bir nechta so'rov
+    bilan), har backup tugashi bilan DARHOL yangi o'zgarish topilib, deyarli
+    TO'XTOVSIZ backup yuborilardi (real production'da kuzatilgan — Data Storage
+    guruhi bir xil "data snapshot" xabarlari bilan spam bo'lib to'lgan edi).
+    Shu sabab DATA_BACKUP_MIN_INTERVAL_SEC (5 daqiqa) throttle ham qo'shildi —
+    bitta bot uchun ikkita backup orasida bu qadar vaqt o'tishi SHART, hatto
+    workdir tinimsiz o'zgarib tursa ham (muddat kelgan bo'lsa ham, so'nggi
+    backup'dan beri yetarli vaqt o'tmagan bo'lsa, keyingi tekshiruv siklida
+    qayta ko'riladi — hech qanday o'zgarish yo'qolmaydi, faqat kechikadi).
     """
     last_sig: dict[int, tuple] = {}
     due_at: dict[int, float] = {}
+    last_backup_at: dict[int, float] = {}
     while True:
         await asyncio.sleep(DATA_CHANGE_CHECK_INTERVAL_SEC)
         now = time.time()
@@ -510,14 +566,10 @@ async def data_backup_watchdog():
             workdir = bot_row["code_path"] or bot_workdir(bot_id)
             sig = _workdir_signature(workdir)
 
-            if last_sig.get(bot_id) != sig:
-                last_sig[bot_id] = sig
-                due_at.setdefault(bot_id, now + DATA_CHANGE_DEBOUNCE_SEC)
-                continue
-
-            if bot_id in due_at and now >= due_at.pop(bot_id):
+            if _should_backup_now(bot_id, sig, now, last_sig, due_at, last_backup_at):
                 try:
                     file_id, err = await backup_bot_data(bot, bot_row, workdir)
+                    last_backup_at[bot_id] = now
                     if file_id:
                         db.set_data_backup_file_id(bot_id, file_id)
                     elif err:

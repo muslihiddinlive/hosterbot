@@ -2098,3 +2098,80 @@ def test_zip_workdir_excludes_log_files(tmp_path):
         names = zf.namelist()
     assert "real_data.json" in names
     assert "run.log" not in names, "run.log zip ichiga kiritilmasligi kerak"
+
+
+def test_should_backup_now_debounces_rapid_changes(monkeypatch):
+    # Bitta o'zgarish -> darhol backup qilinmasligi, DATA_CHANGE_DEBOUNCE_SEC
+    # kutilishi kerak (mavjud debounce mantig'i, regressiyaga qarshi).
+    import main as main_mod
+
+    last_sig, due_at, last_backup_at = {}, {}, {}
+    bot_id = 40
+
+    # t=0: birinchi imzo - hali hech qanday "avvalgi" holat yo'q, shuning
+    # uchun "o'zgarish" deb hisoblanadi va debounce boshlanadi.
+    result = main_mod._should_backup_now(bot_id, ("sig1",), 0.0, last_sig, due_at, last_backup_at)
+    assert result is False
+    assert due_at[bot_id] == main_mod.DATA_CHANGE_DEBOUNCE_SEC
+
+    # t=1: debounce hali tugamagan
+    result = main_mod._should_backup_now(bot_id, ("sig1",), 1.0, last_sig, due_at, last_backup_at)
+    assert result is False
+
+    # t=DATA_CHANGE_DEBOUNCE_SEC: muddat keldi, backup qilinishi kerak
+    result = main_mod._should_backup_now(
+        bot_id, ("sig1",), main_mod.DATA_CHANGE_DEBOUNCE_SEC, last_sig, due_at, last_backup_at
+    )
+    assert result is True
+    assert bot_id not in due_at  # muddat "iste'mol qilingan"
+
+
+def test_should_backup_now_throttles_relentlessly_changing_bot():
+    # MUHIM FIX (bot #40 stsenariysi - real production'da kuzatilgan): bot
+    # HAR SONIYADA yangi update qabul qiladi va har safar JSON faylini
+    # yangilaydi (workdir imzosi doim o'zgaradi). Debounce'ning o'zi bunday
+    # holatda YETARLI EMAS - har backup tugashi bilan yangi o'zgarish darhol
+    # topilib, deyarli TO'XTOVSIZ backup ishga tushardi. Throttle
+    # (DATA_BACKUP_MIN_INTERVAL_SEC) bunga chek qo'yishi kerak.
+    import main as main_mod
+
+    last_sig, due_at, last_backup_at = {}, {}, {}
+    bot_id = 40
+    now = 0.0
+    backup_count = 0
+
+    # 20 daqiqa davomida HAR SONIYADA workdir o'zgaradi (bot doim yozadi)
+    while now < 1200:
+        sig = (int(now),)  # har chaqiruvda YANGI imzo - "doim o'zgaryapti"
+        if main_mod._should_backup_now(bot_id, sig, now, last_sig, due_at, last_backup_at):
+            backup_count += 1
+            last_backup_at[bot_id] = now
+        now += 1.0
+
+    # 20 daqiqada, 5 daqiqalik throttle bilan, ko'pi bilan ~4-5 marta backup
+    # bo'lishi kerak - YUZLAB emas (throttle bo'lmasa DATA_CHANGE_DEBOUNCE_SEC=2
+    # bilan taxminan har 2-3 soniyada bir marta, ya'ni 1200 soniyada ~400-600 marta bo'lardi).
+    assert backup_count <= 5, f"throttle ishlamayapti - {backup_count} marta backup bo'ldi (kutilgan: <=5)"
+    assert backup_count >= 1, "kamida bitta backup bo'lishi kerak edi"
+
+
+def test_should_backup_now_no_change_never_triggers_again(monkeypatch):
+    # Workdir bir marta o'zgargandan (va backup bo'lgandan) keyin BARqaror
+    # qolsa (bir xil imzo), qayta-qayta backup qilinmasligi kerak.
+    import main as main_mod
+
+    last_sig, due_at, last_backup_at = {}, {}, {}
+    bot_id = 40
+    same_sig = ("stable",)
+
+    results = []
+    for t in range(0, 100, 5):
+        r = main_mod._should_backup_now(bot_id, same_sig, float(t), last_sig, due_at, last_backup_at)
+        if r:
+            last_backup_at[bot_id] = float(t)  # watchdog'ning o'zi ham shuni qiladi
+        results.append(r)
+
+    # Faqat BITTA marta True bo'lishi kerak (birinchi "o'zgarish" - debounce
+    # tugagach) - imzo shundan keyin bir xil qolgani uchun boshqa hech qachon
+    # qayta backup qilinmasligi kerak.
+    assert results.count(True) == 1
