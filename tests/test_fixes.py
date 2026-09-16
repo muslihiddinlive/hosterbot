@@ -2047,3 +2047,54 @@ def test_database_module_does_not_touch_disk_for_db_operations(tmp_path, monkeyp
 
     db_files = list(tmp_path.rglob("*.db"))
     assert db_files == [], f"Disk operatsiya bo'lmasligi kerak edi, lekin topildi: {db_files}"
+
+
+def test_workdir_signature_ignores_log_files(tmp_path):
+    # MUHIM BUG FIX (real production'da kuzatilgan): run.log workdir ichida
+    # bot ishlab turgan paytda doim o'zgarib turadi. Agar _workdir_signature()
+    # buni "o'zgarish" deb hisoblasa, ishlab turgan HAR bir bot cheksiz backup
+    # sikliga tushib qolardi (Data Storage guruhini bir xil "Bot #N data
+    # snapshot" xabarlari bilan spam qilib to'ldirib yuborardi). Endi .log
+    # fayllar imzo hisoblashda umuman e'tiborga olinmasligi kerak.
+    from services.data_backup import _workdir_signature
+
+    workdir = tmp_path / "bot_1"
+    workdir.mkdir()
+    (workdir / "real_data.json").write_text('{"x": 1}')
+
+    sig_before = _workdir_signature(str(workdir))
+
+    # run.log qo'shamiz/o'zgartiramiz - bu imzoga TA'SIR QILMASLIGI kerak
+    (workdir / "run.log").write_text("log line 1\n")
+    sig_after_log_created = _workdir_signature(str(workdir))
+    assert sig_before == sig_after_log_created, "run.log yaratilishi imzoni o'zgartirmasligi kerak"
+
+    (workdir / "run.log").write_text("log line 1\nlog line 2\nlog line 3\n" * 100)
+    sig_after_log_grown = _workdir_signature(str(workdir))
+    assert sig_before == sig_after_log_grown, "run.log o'sishi imzoni o'zgartirmasligi kerak"
+
+    # Lekin HAQIQIY ma'lumot fayli o'zgarsa - imzo O'ZGARISHI kerak
+    (workdir / "real_data.json").write_text('{"x": 2}')
+    sig_after_real_change = _workdir_signature(str(workdir))
+    assert sig_before != sig_after_real_change, "haqiqiy ma'lumot fayli o'zgarsa imzo ham o'zgarishi kerak"
+
+
+def test_zip_workdir_excludes_log_files(tmp_path):
+    # run.log backup zip'iga ham kiritilmasligi kerak - bu diagnostika uchun
+    # yozilgan fayl, foydalanuvchi ma'lumoti emas, va zip hajmini keraksiz
+    # oshiradi (18MB backup limitiga tezroq yetkazadi).
+    import zipfile
+    from services.data_backup import _zip_workdir
+
+    workdir = tmp_path / "bot_2"
+    workdir.mkdir()
+    (workdir / "real_data.json").write_text('{"x": 1}')
+    (workdir / "run.log").write_text("log content\n" * 1000)
+
+    zip_path = str(tmp_path / "out.zip")
+    _zip_workdir(str(workdir), zip_path)
+
+    with zipfile.ZipFile(zip_path) as zf:
+        names = zf.namelist()
+    assert "real_data.json" in names
+    assert "run.log" not in names, "run.log zip ichiga kiritilmasligi kerak"

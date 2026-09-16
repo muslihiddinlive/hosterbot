@@ -48,6 +48,15 @@ MAX_BACKUP_BYTES = 18 * 1024 * 1024
 # Zip'ga kiritilmaydigan, keraksiz/vaqtinchalik papkalar va fayllar.
 _EXCLUDED_DIR_NAMES = {"__pycache__", ".git", ".venv", "venv", "node_modules"}
 _EXCLUDED_FILE_SUFFIXES = (".pyc", ".pyo")
+# MUHIM BUG FIX: run.log (va umuman har qanday .log fayl) — bu diagnostika
+# uchun yozilgan, DOIM o'zgarib turadigan fayl, foydalanuvchi MA'LUMOTI emas.
+# Bu fayllar _workdir_signature() va _zip_workdir()ga kiritilganda, ishlab
+# turgan har bir bot (log yozayotgan doim) har necha soniyada "o'zgarish bor"
+# deb aniqlanardi -> cheksiz backup sikliga olib kelardi (Data Storage
+# guruhini bir xil "Bot #N data snapshot" xabarlari bilan spam qilib
+# to'ldirib yuborardi — real holatda kuzatilgan muammo). Endi .log fayllar
+# ham imzo hisoblashda, ham zip yaratishda umuman e'tiborga olinmaydi.
+_EXCLUDED_FILE_SUFFIXES_LOG = (".log",)
 
 
 def _zip_workdir(workdir: str, zip_path: str) -> int:
@@ -56,7 +65,7 @@ def _zip_workdir(workdir: str, zip_path: str) -> int:
         for root, dirs, files in os.walk(workdir):
             dirs[:] = [d for d in dirs if d not in _EXCLUDED_DIR_NAMES]
             for fname in files:
-                if fname.endswith(_EXCLUDED_FILE_SUFFIXES):
+                if fname.endswith(_EXCLUDED_FILE_SUFFIXES) or fname.endswith(_EXCLUDED_FILE_SUFFIXES_LOG):
                     continue
                 full_path = os.path.join(root, fname)
                 if full_path == zip_path:
@@ -98,7 +107,7 @@ def _workdir_signature(workdir: str) -> tuple:
         for root, dirs, files in os.walk(workdir):
             dirs[:] = [d for d in dirs if d not in _EXCLUDED_DIR_NAMES]
             for fname in files:
-                if fname.endswith(_EXCLUDED_FILE_SUFFIXES):
+                if fname.endswith(_EXCLUDED_FILE_SUFFIXES) or fname.endswith(_EXCLUDED_FILE_SUFFIXES_LOG):
                     continue
                 try:
                     st = os.stat(os.path.join(root, fname))
