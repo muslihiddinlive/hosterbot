@@ -2,19 +2,29 @@
 database.py
 Foydalanuvchilar, deploy qilingan botlar va ENV o'zgaruvchilari uchun SQLite qatlami.
 
-DIQQAT: Render Free Tier diski ephemeral (redeploy/restart'da o'chadi).
-Shu sabab bu SQLite fayli faqat "runtime cache" sifatida ishlaydi.
-Har bir muhim yozuvdan keyin (user ro'yxatdan o'tishi, bot deploy bo'lishi va h.k.)
-platform.db faylining o'zi ham STORAGE_GROUP_ID guruhiga backup sifatida yuborilishi kerak
-(services/file_utils.py -> backup_database() funksiyasi shuni qiladi).
-Production'da buni tashqi Postgres (Supabase/Neon free tier) bilan almashtirish tavsiya etiladi.
+MUHIM ARXITEKTURA O'ZGARISHI (RAM + Telegram): Render Free Tier diski ham,
+RAM'i ham juda cheklangan (disk to'lib qolgan holat allaqachon bo'lgan).
+Shu sabab endi SQLite bazasi DISKKA UMUMAN YOZILMAYDI — u faqat XOTIRADA
+(":memory:") yashaydi, bitta doimiy ulanish orqali (chaqiruvlar orasida
+ulanish yopilmaydi, aks holda ":memory:" bazasi har safar bo'shab qolardi).
+Har bir muhim yozuvdan keyin (user ro'yxatdan o'tishi, bot deploy bo'lishi
+va h.k.) xotiradagi bazaning TO'LIQ NUSXASI STORAGE_GROUP_ID guruhiga
+backup sifatida yuboriladi (services/backup.py -> backup_database()).
+Platforma ishga tushganda o'sha backup'dan xotiraga qayta yuklanadi
+(restore_database()). Disk — na o'qish, na yozish uchun ishlatilmaydi,
+shuning uchun "disk to'lib qolish" muammosi bu qatlam uchun butunlay
+yo'qoladi. Bitta ulanish barcha so'rovlar uchun umumiy bo'lgani sabab,
+SQLite'ning o'z ichki qulfi (thread-safety) yetarli emas — shu sabab
+har bir get_conn() chaqiruvi _DB_LOCK bilan himoyalangan (bir vaqtning
+o'zida faqat bitta operatsiya bazaga yoza oladi).
 """
 import secrets
 import sqlite3
+import threading
 import time
 from contextlib import contextmanager
 
-from config import DB_PATH, is_admin, STARS_PER_UNIT as DEFAULT_STARS_PER_UNIT, SECONDS_PER_UNIT as DEFAULT_SECONDS_PER_UNIT, MIN_WITHDRAW_STARS as DEFAULT_MIN_WITHDRAW_STARS, STORAGE_GROUP_ID as DEFAULT_STORAGE_GROUP_ID
+from config import is_admin, STARS_PER_UNIT as DEFAULT_STARS_PER_UNIT, SECONDS_PER_UNIT as DEFAULT_SECONDS_PER_UNIT, MIN_WITHDRAW_STARS as DEFAULT_MIN_WITHDRAW_STARS, STORAGE_GROUP_ID as DEFAULT_STORAGE_GROUP_ID
 from services.crypto_utils import encrypt_value, decrypt_value
 
 SCHEMA = """
@@ -111,16 +121,71 @@ CREATE TABLE IF NOT EXISTS ai_usage_log (
 """
 
 
+_DB_LOCK = threading.RLock()
+_MEMORY_CONN: sqlite3.Connection | None = None
+
+
+def _get_memory_conn() -> sqlite3.Connection:
+    """Butun platforma uchun BITTA doimiy xotiradagi ulanish. ":memory:" bazasi
+    ulanish yopilishi bilan butunlay yo'qoladi — shu sabab bu funksiya har safar
+    yangi connect() qilmaydi, birinchi chaqiruvda yaratadi va keyingilarida
+    O'SHANI qaytaradi."""
+    global _MEMORY_CONN
+    if _MEMORY_CONN is None:
+        _MEMORY_CONN = sqlite3.connect(":memory:", check_same_thread=False)
+        _MEMORY_CONN.row_factory = sqlite3.Row
+        _MEMORY_CONN.execute("PRAGMA foreign_keys = ON")
+    return _MEMORY_CONN
+
+
+def replace_memory_db(raw_bytes: bytes):
+    """Xotiradagi bazani TO'LIQ almashtiradi — Telegram'dan tiklangan backup
+    baytlarini yuklash uchun (restore_database() shuni chaqiradi). Eskisi
+    yopiladi, yangisi shu baytlardan deserialize qilinadi."""
+    global _MEMORY_CONN
+    with _DB_LOCK:
+        new_conn = sqlite3.connect(":memory:", check_same_thread=False)
+        new_conn.row_factory = sqlite3.Row
+        # sqlite3.Connection.deserialize (Python 3.11+) xotiradagi baytlardan
+        # to'liq baza yuklaydi — diskka hech narsa yozilmaydi.
+        new_conn.deserialize(raw_bytes)
+        new_conn.execute("PRAGMA foreign_keys = ON")
+        if _MEMORY_CONN is not None:
+            try:
+                _MEMORY_CONN.close()
+            except Exception:
+                pass
+        _MEMORY_CONN = new_conn
+
+
+def serialize_memory_db() -> bytes:
+    """Xotiradagi bazaning to'liq nusxasini baytlar sifatida qaytaradi —
+    backup_database() shuni Telegram'ga yuboradi. Diskka hech narsa yozilmaydi."""
+    with _DB_LOCK:
+        conn = _get_memory_conn()
+        try:
+            return conn.serialize()
+        except sqlite3.OperationalError:
+            # SQLite'ning o'zi: bazada HALI BIRON-BIR jadval/DDL bajarilmagan
+            # bo'lsa (masalan init_db() chaqirilmasdan turib) serialize()
+            # "unable to serialize 'main'" deb xato beradi. Bu ehtiyot chorasi —
+            # amaliy oqimda main.py har doim avval init_db()'ni chaqiradi, lekin
+            # shunday holat yuzaga kelsa ham chaqiruvchi cho'kib qolmasin uchun
+            # bo'sh-lekin-tashkil-qilingan bazani qaytaramiz.
+            conn.execute("CREATE TABLE IF NOT EXISTS _placeholder (id INTEGER)")
+            return conn.serialize()
+
+
 @contextmanager
 def get_conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    try:
-        yield conn
-        conn.commit()
-    finally:
-        conn.close()
+    with _DB_LOCK:
+        conn = _get_memory_conn()
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
 
 def init_db():

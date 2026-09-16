@@ -112,15 +112,17 @@ async def _run_backup_test(fake_bot):
     return await backup_database(fake_bot)
 
 
-def test_backup_database_returns_ok_tuple_on_success():
+def test_backup_database_returns_ok_tuple_on_success(tmp_path, monkeypatch):
     import asyncio
+    _fresh_db(tmp_path, monkeypatch)  # init_db() chaqirilgan, bo'sh-baza serialize xatosi oldini oladi
     ok, error = asyncio.run(_run_backup_test(_FakeBotSuccess()))
     assert ok is True
     assert error is None
 
 
-def test_backup_database_returns_error_tuple_on_failure():
+def test_backup_database_returns_error_tuple_on_failure(tmp_path, monkeypatch):
     import asyncio
+    _fresh_db(tmp_path, monkeypatch)
     ok, error = asyncio.run(_run_backup_test(_FakeBotFailure()))
     assert ok is False
     assert "Chat not found" in error
@@ -137,11 +139,84 @@ class _FakeBotMigrated:
         )
 
 
-def test_backup_database_reports_new_chat_id_on_migration():
+def test_backup_database_reports_new_chat_id_on_migration(tmp_path, monkeypatch):
     import asyncio
+    _fresh_db(tmp_path, monkeypatch)
     ok, error = asyncio.run(_run_backup_test(_FakeBotMigrated()))
     assert ok is False
     assert "-1004480579801" in error
+
+
+class _FakeDocument:
+    pass
+
+
+class _FakeChatWithBackup:
+    def __init__(self, raw_bytes):
+        self.pinned_message = type("Msg", (), {"document": _FakeDocument()})()
+        self._raw_bytes = raw_bytes
+
+
+class _FakeBotWithRestore:
+    """Telegram'dagi pin qilingan backup'ni simulyatsiya qiladi — get_chat()
+    orqali "pinned document" qaytaradi, download() esa shu hujjatning
+    baytlarini o'zida saqlagan BytesIO qaytaradi (haqiqiy aiogram xatti-harakati)."""
+    def __init__(self, raw_bytes):
+        self._raw_bytes = raw_bytes
+
+    async def get_chat(self, chat_id):
+        return _FakeChatWithBackup(self._raw_bytes)
+
+    async def download(self, document, destination=None):
+        import io
+        return io.BytesIO(self._raw_bytes)
+
+
+def test_restore_database_loads_backup_bytes_into_memory_db(tmp_path, monkeypatch):
+    # MUHIM: restore_database HAQIQIY yo'l — platforma har qayta ishga
+    # tushganda (Render restart/redeploy) shu funksiya orqali butun baza
+    # Telegram'dan xotiraga tiklanadi. Agar bu ishlamasa, restart'da BARCHA
+    # ma'lumot (foydalanuvchilar, botlar, balanslar) yo'qolib qoladi.
+    import asyncio
+    from services.backup import restore_database
+
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+    db_mod.upsert_user(321, "restoretest", "Restore")
+    db_mod.add_user_balance(321, 77, reason="pre-restore balance")
+    raw_bytes = db_mod.serialize_memory_db()
+
+    # Endi "yangi, bo'sh" holatga o'tamiz (masalan platforma qayta ishga
+    # tushgandek) - restore chaqirilmasdan oldin ma'lumot yo'qligini tasdiqlaymiz.
+    import importlib
+    importlib.reload(db_mod)
+    db_mod.init_db()
+    assert db_mod.get_user(321) is None
+
+    ok = asyncio.run(restore_database(_FakeBotWithRestore(raw_bytes)))
+    assert ok is True
+
+    restored = db_mod.get_user(321)
+    assert restored is not None
+    assert restored["username"] == "restoretest"
+    assert restored["balance_stars"] == 77
+
+
+class _FakeChatNoBackup:
+    pinned_message = None
+
+
+class _FakeBotNoBackup:
+    async def get_chat(self, chat_id):
+        return _FakeChatNoBackup()
+
+
+def test_restore_database_returns_false_when_no_backup_pinned(tmp_path, monkeypatch):
+    import asyncio
+    from services.backup import restore_database
+
+    _fresh_db(tmp_path, monkeypatch)
+    ok = asyncio.run(restore_database(_FakeBotNoBackup()))
+    assert ok is False
 
 
 def test_python_version_pinned_to_stable_release():
@@ -155,15 +230,18 @@ def test_python_version_pinned_to_stable_release():
 
 
 def _fresh_db(tmp_path, monkeypatch):
-    """Har bir testga alohida, bo'sh platform.db beradi (davlat testlar orasida
-    sizib qolmasligi uchun) va bot_envs bilan bir xil ENCRYPTION_KEY ni yoqadi."""
+    """Har bir testga alohida, bo'sh xotiradagi (':memory:') baza beradi (holat
+    testlar orasida sizib qolmasligi uchun) va bot_envs bilan bir xil
+    ENCRYPTION_KEY ni yoqadi. database.py endi diskka emas, faqat xotiraga
+    yozadi (RAM + Telegram arxitekturasi) — importlib.reload(database) har
+    safar modul-darajasidagi _MEMORY_CONN'ni qayta boshlaydi, shu bilan har
+    test o'zining mustaqil bo'sh bazasini oladi."""
     import importlib
     from cryptography.fernet import Fernet
 
     monkeypatch.setenv("ENCRYPTION_KEY", Fernet.generate_key().decode())
     import config
     importlib.reload(config)
-    monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "platform_test.db"))
 
     import services.crypto_utils as crypto_utils_mod
     importlib.reload(crypto_utils_mod)
@@ -1874,3 +1952,98 @@ def test_transfer_button_present_in_main_bot_manage_menu():
     kb = bot_manage_kb(bot_row, has_env=False)
     callbacks = {btn.callback_data for row in kb.inline_keyboard for btn in row}
     assert "bot_transfer:9" in callbacks
+
+
+def test_memory_db_persists_across_get_conn_calls(tmp_path, monkeypatch):
+    # MUHIM ARXITEKTURA FIX (RAM + Telegram): SQLite ":memory:" bazasi HAR
+    # YANGI connect() chaqiruvida BO'SH boshlanadi. Agar get_conn() har safar
+    # yangi ulanish ochsa (fayl-asosli bazada bo'lgani kabi), yozilgan
+    # ma'lumot DARHOL yo'qolib qolardi. Bu test bir get_conn() chaqiruvida
+    # yozilgan ma'lumot KEYINGI (mustaqil) get_conn() chaqiruvida ham
+    # ko'rinishini tasdiqlaydi - bitta doimiy modul-darajasidagi ulanish
+    # ishlatilayotganini isbotlaydi.
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+
+    db_mod.upsert_user(555, "persisttest", "Test")
+
+    # Alohida, mustaqil get_conn() chaqiruvi orqali o'qiymiz
+    user = db_mod.get_user(555)
+    assert user is not None
+    assert user["username"] == "persisttest"
+
+
+def test_serialize_and_replace_memory_db_roundtrip(tmp_path, monkeypatch):
+    # backup_database/restore_database asosidagi mexanizm: xotiradagi bazani
+    # baytlarga aylantirib (serialize), keyin ularni YANGI xotiradagi bazaga
+    # yuklash (deserialize/replace) orqali TO'LIQ tiklay olishi kerak - bu
+    # Telegram orqali backup/restore qilishning yurak qismi.
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+
+    db_mod.upsert_user(111, "roundtrip_user", "RoundTrip")
+    db_mod.add_user_balance(111, 50, reason="test topup")
+    code_dir = tmp_path / "bot_1"
+    code_dir.mkdir()
+    bot_id = db_mod.create_bot(
+        owner_id=111, bot_username="rtbot", bot_token="123:ABC", code_path=str(code_dir),
+        storage_file_id=None, is_zip=False, language="python",
+        build_cmd="", start_cmd="python bot.py",
+    )
+
+    raw_bytes = db_mod.serialize_memory_db()
+    assert isinstance(raw_bytes, bytes)
+    assert len(raw_bytes) > 0
+
+    # Ma'lumotlarni "yo'qotamiz" - butunlay yangi, bo'sh (lekin sxemasi
+    # tashkil qilingan) xotiradagi bazaga o'tamiz, keyin asl baytlardan tiklaymiz.
+    empty_conn = __import__("sqlite3").connect(":memory:")
+    empty_conn.executescript(db_mod.SCHEMA)
+    db_mod.replace_memory_db(empty_conn.serialize())
+    assert db_mod.get_user(111) is None  # haqiqatan ham "yo'qolgani"ni tasdiqlaymiz
+
+    # Endi asl baytlardan tiklaymiz
+    db_mod.replace_memory_db(raw_bytes)
+
+    restored_user = db_mod.get_user(111)
+    assert restored_user is not None
+    assert restored_user["username"] == "roundtrip_user"
+    assert restored_user["balance_stars"] == 50
+
+    restored_bot = db_mod.get_bot(bot_id)
+    assert restored_bot is not None
+    assert restored_bot["bot_username"] == "rtbot"
+    assert restored_bot["bot_token"] == "123:ABC"  # shifrlash ham to'g'ri saqlangan/tiklangan
+
+
+def test_serialize_memory_db_works_even_when_db_is_completely_empty(tmp_path, monkeypatch):
+    # Ehtiyot chorasi: agar serialize_memory_db() init_db() chaqirilmasdan
+    # turib chaqirilsa (masalan boshqa modul tartibida), SQLite'ning o'zi
+    # "unable to serialize 'main'" xatosini berardi (bo'sh, hech qanday DDL
+    # bajarilmagan bazada). Bu endi xato bermasligi kerak.
+    import importlib
+    import database as db_mod
+    importlib.reload(db_mod)
+    # DIQQAT: init_db() ATAYLAB chaqirilmagan - bo'sh holatni sinaymiz
+    raw_bytes = db_mod.serialize_memory_db()
+    assert isinstance(raw_bytes, bytes)
+    assert len(raw_bytes) > 0
+
+
+def test_database_module_does_not_touch_disk_for_db_operations(tmp_path, monkeypatch):
+    # Disk-to'lib-qolish fix'ining yuragi: platform.db endi HECH QACHON
+    # diskka yozilmasligi kerak. Bu test tmp_path'da hech qanday .db fayl
+    # yaratilmasligini tasdiqlaydi - hatto ko'p yozuv operatsiyalaridan keyin ham.
+    db_mod = _fresh_db(tmp_path, monkeypatch)
+
+    for i in range(20):
+        db_mod.upsert_user(1000 + i, f"user{i}", f"Test{i}")
+    code_dir = tmp_path / "bot_1"
+    code_dir.mkdir()
+    for i in range(5):
+        db_mod.create_bot(
+            owner_id=1000, bot_username=f"bot{i}", bot_token=None, code_path=str(code_dir),
+            storage_file_id=None, is_zip=False, language="python",
+            build_cmd="", start_cmd="python bot.py",
+        )
+
+    db_files = list(tmp_path.rglob("*.db"))
+    assert db_files == [], f"Disk operatsiya bo'lmasligi kerak edi, lekin topildi: {db_files}"

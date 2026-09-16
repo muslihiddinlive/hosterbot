@@ -1,9 +1,13 @@
 """
 services/backup.py
 
-Render Free Tier diski ephemeral bo'lgani uchun (redeploy/restart'da o'chadi),
-platform.db faylini STORAGE_GROUP_ID guruhiga backup qilamiz va kerak bo'lganda
-qayta tiklaymiz.
+MUHIM ARXITEKTURA (RAM + Telegram): platform.db endi DISKDA UMUMAN YASHAMAYDI —
+faqat xotirada (database.py'dagi ":memory:" ulanishi). Bu modul xotiradagi
+bazaning to'liq baytli nusxasini (database.serialize_memory_db()) to'g'ridan-to'g'ri
+Telegram'ga yuboradi (diskka vaqtincha ham yozmasdan — BufferedInputFile xotiradan
+o'qiydi), va tiklashda ham baytlarni to'g'ridan-to'g'ri xotiraga yuklaydi
+(database.replace_memory_db()). Bu bilan "disk to'lib qolish" muammosi ushbu
+qatlam uchun butunlay yo'qoladi.
 
 Usul: backup faylini guruhga document sifatida yuboramiz va PIN qilamiz.
 Telegram getChat() har doim guruhdagi "eng so'nggi pin qilingan xabar"ni qaytaradi,
@@ -13,10 +17,11 @@ backup avtomatik "joriy" hisoblanadi.
 import logging
 
 from aiogram import Bot
-from aiogram.types import FSInputFile
+from aiogram.types import BufferedInputFile
 from aiogram.exceptions import TelegramMigrateToChat
 
-from config import STORAGE_GROUP_ID, DB_PATH
+from config import STORAGE_GROUP_ID
+import database as db
 
 log = logging.getLogger("hosterbot.backup")
 
@@ -26,9 +31,10 @@ async def backup_database(bot: Bot) -> tuple[bool, str | None]:
     Chaqiruvchi xohlasa xatoni foydalanuvchiga/adminga ko'rsatishi mumkin — avval bu
     funksiya xatoni yutib yuborardi, endi chaqiruvchiga qaror qabul qilish imkonini beradi."""
     try:
+        raw_bytes = db.serialize_memory_db()
         sent = await bot.send_document(
             STORAGE_GROUP_ID,
-            FSInputFile(DB_PATH, filename="platform.db"),
+            BufferedInputFile(raw_bytes, filename="platform.db"),
             caption="🗄 platform.db backup",
             disable_notification=True,
         )
@@ -55,15 +61,18 @@ async def backup_database(bot: Bot) -> tuple[bool, str | None]:
 
 
 async def restore_database(bot: Bot) -> bool:
-    """Agar guruhda pin qilingan backup bo'lsa, uni yuklab platform.db o'rniga qo'yadi."""
+    """Agar guruhda pin qilingan backup bo'lsa, uni yuklab XOTIRADAGI bazaga
+    (diskka emas) qo'yadi."""
     try:
         chat = await bot.get_chat(STORAGE_GROUP_ID)
         pinned = chat.pinned_message
         if pinned is None or pinned.document is None:
             log.info("Pin qilingan DB backup topilmadi — bo'sh bazadan boshlanadi.")
             return False
-        await bot.download(pinned.document, destination=DB_PATH)
-        log.info("platform.db backup'dan muvaffaqiyatli tiklandi.")
+        file_io = await bot.download(pinned.document)
+        raw_bytes = file_io.read()
+        db.replace_memory_db(raw_bytes)
+        log.info("platform.db backup'dan xotiraga muvaffaqiyatli tiklandi.")
         return True
     except TelegramMigrateToChat as e:
         log.warning(

@@ -63,6 +63,10 @@ BOT_CPU_TIME_LIMIT_SEC = int(os.environ.get("BOT_CPU_TIME_LIMIT_SEC", "0"))  # 0
 TOTAL_RAM_BUDGET_MB = int(os.environ.get("TOTAL_RAM_BUDGET_MB", "420"))
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "bots_data")
+# DB_PATH endi ISHLATILMAYDI (database.py xotirada ":memory:" ishlaydi, disk
+# umuman aralashmaydi — services/backup.py orqali Telegram'ga backup/restore
+# qilinadi). Qoldirilgan — faqat eski skriptlar/qo'lda migratsiyalar uchun
+# ma'lumot sifatida.
 DB_PATH = os.path.join(os.path.dirname(__file__), "platform.db")
 
 os.makedirs(DATA_DIR, exist_ok=True)
