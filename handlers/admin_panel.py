@@ -9,6 +9,7 @@ import re
 from datetime import datetime
 
 from aiogram import Router, F, Bot
+from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 
@@ -218,10 +219,79 @@ async def cb_admin_set_data_storage_group(callback: CallbackQuery, state: FSMCon
         f"(hozir: <code>{current}</code>).\n\n"
         f"Eslatma: guruhda \"Topics\" (mavzular) yoqilgan va bot \"Manage Topics\" "
         f"huquqi bilan admin qilingan bo'lishi kerak — aks holda backup'lar "
-        f"guruhning umumiy oqimiga (topic'siz) tushadi.",
+        f"guruhning umumiy oqimiga (topic'siz) tushadi.\n\n"
+        f"🔍 Diagnostika uchun: <code>/data_storage_check</code> buyrug'ini yuboring — "
+        f"joriy sozlama, bot huquqlari va topic holatini tekshirib beradi.",
         parse_mode="HTML",
     )
     await callback.answer()
+
+
+@router.message(Command("data_storage_check"))
+async def cmd_data_storage_check(message: Message, bot: Bot):
+    """DIAGNOSTIKA (xavfsizlik/topic muammolarini aniqlash uchun qo'shildi):
+    joriy data_storage_group_id sozlamasini, bot shu guruhda qanday huquqqa
+    ega ekanini va guruh forum (topics) rejimida yoki yo'qligini aniq
+    ko'rsatadi — 'nega backup topicsiz tushяpti' kabi savollarga taxmin
+    qilmasdan javob berish uchun."""
+    if not is_superadmin(message.from_user.id):
+        return
+
+    group_id = db.get_data_storage_group_id()
+    main_group_id = STORAGE_GROUP_ID
+    lines = [
+        f"🔍 <b>Data Storage diagnostikasi</b>",
+        f"",
+        f"Sozlangan data_storage_group_id: <code>{group_id}</code>",
+        f"Asosiy STORAGE_GROUP_ID (platform.db uchun): <code>{main_group_id}</code>",
+    ]
+    if group_id == main_group_id:
+        lines.append(
+            "⚠️ <b>IKKALASI BIR XIL!</b> Bu — alohida Data Storage guruhi "
+            "sozlanmagan degani (yoki tasodifan asosiy guruh ID'si kiritilgan). "
+            "Bot ma'lumotlari platform.db bilan BITTA guruhga tushmoqda."
+        )
+    else:
+        lines.append("✅ Alohida guruh sozlangan (asosiy guruhdan farqli).")
+
+    try:
+        chat = await bot.get_chat(group_id)
+        lines.append(f"\nGuruh nomi: <b>{chat.title or '—'}</b>")
+        is_forum = bool(getattr(chat, "is_forum", False))
+        lines.append(f"Forum (Topics) rejimi: {'✅ YOQILGAN' if is_forum else '❌ O‘CHIQ'}")
+        if not is_forum:
+            lines.append(
+                "⚠️ Guruh Topics rejimida emas — shu sabab har qanday bot uchun "
+                "ham topic ochilmaydi, hammasi umumiy oqimga tushadi. Guruh "
+                "sozlamalaridan \"Topics\"ni yoqing."
+            )
+    except Exception as e:
+        lines.append(f"\n❌ Guruhga kira olmadim: <code>{e}</code>")
+        lines.append(
+            "Bu odatda: (1) bot shu guruhda a'zo emas, (2) ID noto'g'ri, "
+            "yoki (3) guruh o'chirilgan/migratsiya qilingan degani."
+        )
+        await message.answer("\n".join(lines), parse_mode="HTML")
+        return
+
+    try:
+        member = await bot.get_chat_member(group_id, bot.id)
+        status = getattr(member, "status", "?")
+        lines.append(f"\nBotning guruhdagi holati: <b>{status}</b>")
+        can_manage_topics = getattr(member, "can_manage_topics", None)
+        if status == "administrator":
+            lines.append(f"Manage Topics huquqi: {'✅' if can_manage_topics else '❌ YO‘Q'}")
+            if not can_manage_topics:
+                lines.append(
+                    "⚠️ Bot admin, lekin \"Manage Topics\" huquqi yo'q — shu sabab "
+                    "topic yarata olmaydi. Guruh sozlamalarida botga shu huquqni bering."
+                )
+        else:
+            lines.append("⚠️ Bot bu guruhda ADMIN EMAS — topic yarata olmaydi va hatto oddiy xabar/fayl ham yuborolmasligi mumkin.")
+    except Exception as e:
+        lines.append(f"\n❌ Bot huquqlarini tekshirib bo'lmadi: <code>{e}</code>")
+
+    await message.answer("\n".join(lines), parse_mode="HTML")
 
 
 @router.message(AdminDataStorage.waiting_group_id)
