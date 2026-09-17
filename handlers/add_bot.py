@@ -17,7 +17,7 @@ from services.file_utils import (
     detect_language_from_zip, extract_zip, bot_workdir, write_env_file,
     resolve_project_root, find_requirements_txt, normalize_requirements_filename,
     list_py_files_in_zip, resolve_start_command, fix_all_py_encodings,
-    detect_external_imports, detect_credentials, cleanup_bot_files,
+    detect_external_imports, detect_credentials, cleanup_bot_files, bot_deps_dir,
 )
 from services.deploy_manager import run_build_command, start_bot_process, static_scan, read_log_tail, is_running, format_log_block
 from services.resource_monitor import can_start_new_bot, format_ram_limit_message
@@ -505,7 +505,7 @@ async def finalize_deploy(message: Message, state: FSMContext, bot: Bot):
 
     log_path = os.path.join(workdir, "run.log")
     with open(log_path, "w", encoding="utf-8") as log_file:
-        build_ok = await asyncio.to_thread(run_build_command, workdir, build_cmd, log_file)
+        build_ok = await asyncio.to_thread(run_build_command, workdir, build_cmd, log_file, deps_target=bot_deps_dir(workdir))
 
     if not build_ok:
         db.set_bot_status(bot_id, "crashed")

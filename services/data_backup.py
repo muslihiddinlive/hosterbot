@@ -46,7 +46,11 @@ log = logging.getLogger("hosterbot.data_backup")
 MAX_BACKUP_BYTES = 18 * 1024 * 1024
 
 # Zip'ga kiritilmaydigan, keraksiz/vaqtinchalik papkalar va fayllar.
-_EXCLUDED_DIR_NAMES = {"__pycache__", ".git", ".venv", "venv", "node_modules"}
+# "deps" — bot_deps_dir() orqali pip o'rnatadigan botga xos kutubxonalar papkasi
+# (services/deploy_manager.py). Bular foydalanuvchi MA'LUMOTI emas — har build/restart'da
+# requirements.txt'dan qayta tiklanadi — shu sabab backup'ga umuman kerak emas (va
+# ko'p hollarda 18MB limitidan ham katta bo'lardi).
+_EXCLUDED_DIR_NAMES = {"__pycache__", ".git", ".venv", "venv", "node_modules", "deps"}
 _EXCLUDED_FILE_SUFFIXES = (".pyc", ".pyo")
 # MUHIM BUG FIX: run.log (va umuman har qanday .log fayl) — bu diagnostika
 # uchun yozilgan, DOIM o'zgarib turadigan fayl, foydalanuvchi MA'LUMOTI emas.
@@ -93,6 +97,25 @@ async def _ensure_topic(bot: Bot, group_id: int, bot_row) -> int | None:
     except Exception as e:
         log.info(f"Bot #{bot_row['bot_id']}: topic yaratib bo'lmadi (guruh forum rejimida emas yoki huquq yo'q): {e}")
         return None
+
+
+async def delete_bot_topic(bot: Bot, bot_row) -> None:
+    """TOPIC CHIQINDISI FIX: bot o'chirilganda (yoki tozalanganda) uning Data
+    Storage guruhidagi topic'ini ham o'chiradi. `bot_id` AUTOINCREMENT bo'lgani
+    uchun bot o'chirilib qayta qo'shilsa, HAR SAFAR yangi bot_id va yangi topic
+    ochilardi — eskisi hech qachon o'chirilmagani uchun guruh vaqt o'tishi bilan
+    faqat bir nechta botdan ham o'nlab "yopiq" topic bilan to'lib ketardi.
+    Xato (topic allaqachon o'chirilgan, huquq yo'q, guruh forum rejimida emas
+    va h.k.) jimgina e'tiborsiz qoldiriladi — bot o'chirish jarayonini
+    to'xtatmasligi kerak."""
+    topic_id = bot_row["data_topic_id"] if bot_row else None
+    if not topic_id:
+        return
+    try:
+        group_id = db.get_data_storage_group_id()
+        await bot.delete_forum_topic(group_id, topic_id)
+    except Exception as e:
+        log.info(f"Bot #{bot_row['bot_id']}: topic o'chirib bo'lmadi (e'tiborsiz qoldirildi): {e}")
 
 
 def _workdir_signature(workdir: str) -> tuple:

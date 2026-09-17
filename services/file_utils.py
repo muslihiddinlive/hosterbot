@@ -264,6 +264,22 @@ def bot_workdir(bot_id: int) -> str:
     return path
 
 
+def bot_deps_dir(workdir: str) -> str:
+    """Botning SHAXSIY (global site-packages'dan ALOHIDA) pip paketlar papkasi.
+    DISK TO'LIB QOLISH FIX: ilgari `pip install -r requirements.txt` to'g'ridan-to'g'ri
+    platformaning umumiy/global Python muhitiga o'rnatilardi — har bir bot talab
+    qilgan kutubxona (masalan opencv, torch, selenium) ABADIY diskda qolib
+    ketardi, hatto bot o'chirilgandan keyin ham (cleanup_bot_files faqat workdir'ni
+    o'chiradi, global site-packages'ga tegmaydi). TG-DB backup ham faqat workdir'ni
+    qamraydi — shu sabab bu o'sish "ko'rinmas" bo'lib, disk sekin-asta to'lib
+    borardi. Endi har bot o'z paketlarini shu `workdir/deps` papkasiga o'rnatadi
+    (--target), bot ishga tushganda PYTHONPATH orqali topiladi, va bot o'chirilganda
+    (workdir bilan birga) paketlar HAM avtomatik o'chib ketadi."""
+    path = os.path.join(workdir, "deps")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
 def write_env_file(bot_id: int, env_pairs: dict) -> str:
     workdir = bot_workdir(bot_id)
     env_path = os.path.join(workdir, ".env")

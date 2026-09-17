@@ -18,9 +18,10 @@ from services.resource_monitor import can_start_new_bot, bot_ram_mb, format_ram_
 from services.file_utils import (
     cleanup_bot_files, write_env_file, extract_zip, resolve_project_root,
     normalize_requirements_filename, fix_all_py_encodings, fix_py_encoding,
-    find_requirements_txt,
+    find_requirements_txt, bot_deps_dir,
 )
 from services.backup import backup_database
+from services.data_backup import delete_bot_topic
 from services.ai_client import ask_ai, build_crash_diagnosis_prompt, AIError
 
 router = Router()
@@ -209,7 +210,7 @@ async def cb_bot_rebuild(callback: CallbackQuery, bot: Bot):
     log_path = os.path.join(bot_row["code_path"], "run.log")
     try:
         with open(log_path, "a", encoding="utf-8") as log_file:
-            build_ok = await asyncio.to_thread(run_build_command, bot_row["code_path"], bot_row["build_cmd"] or "", log_file)
+            build_ok = await asyncio.to_thread(run_build_command, bot_row["code_path"], bot_row["build_cmd"] or "", log_file, deps_target=bot_deps_dir(bot_row["code_path"]))
     except Exception as e:
         log.exception("Qayta build qilishda xato")
         await callback.message.answer(format_log_block(f"⚠️ {bot_label} — build xatosi", str(e)), parse_mode="HTML")
@@ -322,6 +323,7 @@ async def confirm_delete_text(message: Message, state: FSMContext, bot: Bot):
         return
 
     stop_bot_process(bot_id)
+    await delete_bot_topic(bot, bot_row)
     db.delete_bot(bot_id)
     cleanup_bot_files(bot_id)
     await backup_database(bot)
@@ -1184,7 +1186,7 @@ async def _rebuild_and_start(bot_id: int, bot: Bot, message: Message):
     log_path = os.path.join(bot_row["code_path"], "run.log")
     try:
         with open(log_path, "a", encoding="utf-8") as log_file:
-            build_ok = await asyncio.to_thread(run_build_command, bot_row["code_path"], bot_row["build_cmd"] or "", log_file)
+            build_ok = await asyncio.to_thread(run_build_command, bot_row["code_path"], bot_row["build_cmd"] or "", log_file, deps_target=bot_deps_dir(bot_row["code_path"]))
     except Exception as e:
         log.exception("Qayta build qilishda xato")
         await message.answer(format_log_block(f"⚠️ {bot_label} — build xatosi", str(e)), parse_mode="HTML")

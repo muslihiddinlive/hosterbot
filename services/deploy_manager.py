@@ -24,6 +24,7 @@ from config import WEBHOOK_BASE_URL
 
 from config import BOT_MEMORY_LIMIT_MB, BOT_CPU_TIME_LIMIT_SEC
 from services.deploy_log import write_stage
+from services.file_utils import bot_deps_dir
 
 # Xavfli bo'lishi mumkin bo'lgan importlar (statik tekshiruv — to'liq himoya emas,
 # faqat birinchi qatlam sifatida)
@@ -103,7 +104,7 @@ def install_requirements(workdir: str, requirements_path: str, log_file) -> bool
     return result.returncode == 0
 
 
-def normalize_interpreter(cmd: str) -> str:
+def normalize_interpreter(cmd: str, deps_target: str | None = None) -> str:
     """
     Foydalanuvchi yoki avtomatik generatsiya "python ..." / "pip ..." deb yozgan bo'lsa,
     buni AYNAN shu platformani ishga tushirgan interpreterga (sys.executable) moslashtiradi.
@@ -112,11 +113,20 @@ def normalize_interpreter(cmd: str) -> str:
     build/start bosqichi "command not found" bilan har doim muvaffaqiyatsiz bo'lib qolishi mumkin edi.
     Faqat qator BOSHIDAGI so'zni almashtiramiz, ichkarida (masalan argumentda) "python" so'zi
     bo'lsa tegilmaydi.
+
+    DISK TO'LIB QOLISH FIX: `deps_target` berilgan bo'lsa va buyruq "pip install ..."
+    bo'lsa, paketlar global site-packages o'rniga shu (botga xos) papkaga
+    o'rnatiladi — bot_deps_dir() (services/file_utils.py) izohiga qarang.
     """
     stripped = cmd.strip()
+    if stripped.startswith("pip3"):
+        stripped = "pip" + stripped[len("pip3"):]
     if stripped.startswith("pip install") or stripped == "pip" or stripped.startswith("pip "):
-        rest = stripped[len("pip"):]
-        return f'"{sys.executable}" -m pip{rest}'
+        rest = stripped[len("pip"):].strip()
+        if deps_target and rest.startswith("install"):
+            after_install = rest[len("install"):]
+            rest = f'install --target "{deps_target}" --upgrade{after_install}'
+        return f'"{sys.executable}" -m pip {rest}' if rest else f'"{sys.executable}" -m pip'
     if stripped.startswith("python ") or stripped == "python":
         rest = stripped[len("python"):]
         return f'"{sys.executable}"{rest}'
@@ -134,11 +144,11 @@ def normalize_interpreter(cmd: str) -> str:
     return cmd
 
 
-def run_build_command(workdir: str, build_cmd: str, log_file) -> bool:
+def run_build_command(workdir: str, build_cmd: str, log_file, deps_target: str | None = None) -> bool:
     if not build_cmd:
         write_stage(log_file, "build_skipped", reason="build_cmd bo'sh")
         return True
-    build_cmd = normalize_interpreter(build_cmd)
+    build_cmd = normalize_interpreter(build_cmd, deps_target=deps_target)
     write_stage(log_file, "build_start", cmd=build_cmd)
     try:
         result = subprocess.run(
@@ -203,6 +213,15 @@ def start_bot_process(bot_id: int, workdir: str, start_cmd: str, env_pairs: dict
     SAFE_ENV_KEYS = {"PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "PYTHONIOENCODING", "TMPDIR"}
     full_env = {k: v for k, v in os.environ.items() if k in SAFE_ENV_KEYS}
     full_env.update(env_pairs)
+
+    # DISK TO'LIB QOLISH FIX: build bosqichida paketlar botga xos "deps"
+    # papkasiga o'rnatilgan bo'lsa (bot_deps_dir), bot shu paketlarni topa olishi
+    # uchun PYTHONPATH orqali ko'rsatamiz. Foydalanuvchi ENV'da o'zi PYTHONPATH
+    # bergan bo'lsa (env_pairs.update yuqorida allaqachon bo'lib o'tgan), uni
+    # ustidan yozib yubormaslik uchun mavjud qiymatga qo'shib qo'yamiz.
+    deps_dir = bot_deps_dir(workdir)
+    existing_pp = full_env.get("PYTHONPATH", "")
+    full_env["PYTHONPATH"] = f"{deps_dir}{os.pathsep}{existing_pp}" if existing_pp else deps_dir
 
     # YANGI FEATURE: bot o'z ichida webhook-server kodiga ega bo'lib, buni
     # superadmin/owner ATAYLAB yoqqan bo'lsa (webhook_proxy_enabled) — botga
